@@ -1,4 +1,174 @@
 import numpy as np
+import tensorflow as tf
+
+
+class Metric:
+    def __init__(self, name):
+        super().__init__()
+        self.name = name
+        self.total = tf.Variable(0.0)
+        self.count = tf.Variable(0.0)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        raise NotImplementedError()
+
+    def result(self):
+        return self.total / self.count
+
+    def reset_states(self):
+        self.total.assign(0)
+        self.count.assign(0)
+
+
+class ModelFidelityPlus(Metric):
+    def __init__(self, name="model_fidelity+"):
+        super().__init__(name)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        fidelity = tf.reduce_mean(
+            tf.abs(tf.math.subtract(pred_on_original, pred_on_nonrelevant))
+        )
+        self.total.assign_add(fidelity)
+        self.count.assign_add(1.0)
+
+
+class OldModelFidelityPlus(Metric):
+    def __init__(self, name="old_model_fidelity+"):
+        super().__init__(name)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        negative_masked_input = tf.math.multiply(historical, nonrelevant_mask)
+        fidelity = fidelity_score(
+            historical, negative_masked_input, from_seqs=True, model=kwargs["model"]
+        )
+        self.total.assign_add(fidelity)
+        self.count.assign_add(1.0)
+
+
+class ModelFidelityMinus(Metric):
+    def __init__(self, name="model_fidelity-"):
+        super().__init__(name)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        fidelity = tf.reduce_mean(
+            tf.abs(tf.math.subtract(pred_on_original, pred_on_relevant))
+        )
+        self.total.assign_add(fidelity)
+        self.count.assign_add(1.0)
+
+
+class PhenomenonFidelityPlus(Metric):
+    def __init__(self, name="phenomenon_fidelity+"):
+        super().__init__(name)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        fidelity = tf.reduce_mean(
+            tf.abs(
+                tf.math.subtract(
+                    tf.abs(tf.math.subtract(phenomenon, pred_on_original)),
+                    tf.abs(tf.math.subtract(phenomenon, pred_on_nonrelevant)),
+                )
+            )
+        )
+        self.total.assign_add(fidelity)
+        self.count.assign_add(1.0)
+
+
+class PhenomenonFidelityMinus(Metric):
+    def __init__(self, name="phenomenon_fidelity-"):
+        super().__init__(name)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        fidelity = tf.reduce_mean(
+            tf.abs(
+                tf.math.subtract(
+                    tf.abs(tf.math.subtract(phenomenon, pred_on_original)),
+                    tf.abs(tf.math.subtract(phenomenon, pred_on_relevant)),
+                )
+            )
+        )
+        self.total.assign_add(fidelity)
+        self.count.assign_add(1.0)
+
+
+class Sparsity(Metric):
+    def __init__(self, name="sparsity"):
+        super().__init__(name)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        sparsity_fn = lambda x: 1.0 - tf.reduce_sum(x) / tf.cast(tf.size(x), tf.float32)
+        self.total.assign_add(sparsity_fn(relevant_mask))
+        self.count.assign_add(1.0)
 
 
 def fidelity_score(true, pred, from_seqs=False, model=None):

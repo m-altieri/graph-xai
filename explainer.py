@@ -3,6 +3,7 @@ import sys
 import sklearn
 import argparse
 import numpy as np
+from tqdm import tqdm
 
 np.random.seed(42)
 import pandas as pd
@@ -20,8 +21,10 @@ tf.config.set_visible_devices(physical_devices[:1], "GPU")
 logical_devices = tf.config.list_logical_devices("GPU")
 assert len(logical_devices) == len(physical_devices) - 1
 
-sys.path.insert(1, os.path.join(sys.path[0], ".."))
-import utils.sequence
+sys.path.append(os.path.join(os.getcwd(), ".."))
+sys.path.append(os.path.join(os.getcwd(), "lib"))
+
+from utils.sequence import obs2seqs
 from models.LSTM import LSTM
 from models.SVD_LSTM import SVD_LSTM
 from models.CNN_LSTM import CNN_LSTM
@@ -33,14 +36,25 @@ from perturbation_strategies import (
     PercentilePerturbationStrategy,
     FixedValuePerturbationStrategy,
 )
-from metrics import fidelity_score, fidelity_score_rf
+from exp_learning.exp_learner import MetaMasker
+from exp_learning.xai_losses import *
+from metrics import (
+    ModelFidelityPlus,
+    ModelFidelityMinus,
+    PhenomenonFidelityPlus,
+    PhenomenonFidelityMinus,
+    Sparsity,
+    OldModelFidelityPlus,
+    fidelity_score,
+    fidelity_score_rf,
+)
 from rf_feature_importance import plot_rf_feature_importance
 from lime.lime_tabular import LimeTabularExplainer
 
 
 def create_timeseries(dataset, test_indexes):
     horizon = dataset_config[dataset_name]["timesteps"]
-    X, Y = utils.sequence.obs2seqs(dataset, horizon, horizon, horizon)
+    X, Y = obs2seqs(dataset, horizon, horizon, horizon)
 
     test_indexes = test_indexes - horizon // horizon  # l'indice è da quando parte
     trainX = X
@@ -100,9 +114,24 @@ argparser.add_argument(
     type=float,
     help="Perturbation intensity",
 )
-argparser.add_argument("--rf", action="store_true")
-argparser.add_argument("--lime", action="store_true")
-argparser.add_argument("--topk", action="store", type=int)
+argparser.add_argument(
+    "--gd", action="store_true", help="Run and evaluate our gradient descent method."
+)
+argparser.add_argument(
+    "--pert",
+    action="store_true",
+    help="Run and evaluate our perturbation-based method.",
+)
+argparser.add_argument(
+    "--rf", action="store_true", help="Run and evaluate Random Forest."
+)
+argparser.add_argument("--lime", action="store_true", help="Run and evaluate LIME.")
+argparser.add_argument(
+    "--topk", action="store", type=int, help="Set the amount of top dims to take."
+)
+argparser.add_argument(
+    "-r", "--run-name", help="Run name. Mainly for folder name purposes."
+)
 args = argparser.parse_args()
 axis_index = {"timesteps": 0, "nodes": 1, "features": 2}
 axis_order = ["features", "timesteps", "nodes"]
@@ -145,15 +174,9 @@ pert_config = {
 
 
 # LOAD DATA
-dataset = np.load(os.path.join("../..", "data", dataset_name, dataset_name + ".npz"))[
-    "data"
-]
-adj = create_adj(
-    os.path.join("../../data", dataset_name, f"closeness-{dataset_name}.npy")
-)
-test_indexes = np.load(
-    os.path.join("../..", "data", dataset_name, dataset_name + "_0.1.npy")
-)
+dataset = np.load(os.path.join("data", dataset_name, dataset_name + ".npz"))["data"]
+adj = create_adj(os.path.join("data", dataset_name, f"closeness-{dataset_name}.npy"))
+test_indexes = np.load(os.path.join("data", dataset_name, dataset_name + "_0.1.npy"))
 trainX, trainY, testX, testY, test_indexes = create_timeseries(dataset, test_indexes)
 
 # MODEL CONFIGURATION
@@ -215,7 +238,7 @@ model = model_config[model_name]["class"](
 model.compile(run_eagerly=True)
 
 # Load model weights
-model_weights_path = f"../../saved_models/{model_name}-{dataset_name}-{dataset_config[dataset_name]['test_dates'] - 1}.h5"
+model_weights_path = f"saved_models/{model_name}-{dataset_name}-{dataset_config[dataset_name]['test_dates'] - 1}.h5"
 model(trainX[:1])
 model.load_weights(model_weights_path)
 
@@ -596,7 +619,6 @@ if args.rf:
         f"{'Model F+':<8} {'Model F-':<8} {'Phenom F+':<8} {'Phenom F-':<8} {'Sparsity':<8}"
     )
     print(f"{mfp:<8.3f} {mfm:<8.3f} {pfp:<8.3f} {pfm:<8.3f} {sparsity:<8.3f}")
-    sys.exit(0)
 
 
 def evaluate_lime(trainX, trainY, testX, testY):
@@ -722,61 +744,133 @@ if args.lime:
         f"{'Model F+':<8} {'Model F-':<8} {'Phenom F+':<8} {'Phenom F-':<8} {'Sparsity':<8}"
     )
     print(f"{mfp:<8.3f} {mfm:<8.3f} {pfp:<8.3f} {pfm:<8.3f} {sparsity:<8.3f}")
-    sys.exit(0)
 
 
-top_Ks = []
-results = []
-previous_perturbed = testX[-1]
-for level in ["features", "timesteps", "nodes"]:
-    axis = level
+if args.gd:
+    LEARNING_RATE = 0.01
+    BATCH_SIZE = 4
+    EPOCHS = 10
 
-    pred, perturbed, preds_perturbed, global_metrics, avg_ranking = perturb_and_pred(
-        previous_perturbed, axis
+    # Initialize meta-model
+    metamasker = MetaMasker(model, run_name=args.run_name)
+    metamasker.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
+        loss=SparsityAwareModelFidelityLoss(),
+    )
+    metamasker.track_metrics(
+        [
+            ModelFidelityPlus(),
+            ModelFidelityMinus(),
+            PhenomenonFidelityPlus(),
+            PhenomenonFidelityMinus(),
+            Sparsity(),
+            OldModelFidelityPlus(),
+        ]
     )
 
-    top_K = compute_elbow(global_metrics)
-    print(top_K)
-    top_Ks.append(top_K)
+    # Prepare dataset for training
+    train_dataset = tf.data.Dataset.from_tensor_slices((trainX, trainY))
+    train_dataset = (
+        train_dataset.shuffle(train_dataset.cardinality())
+        .batch(BATCH_SIZE)
+        .prefetch(tf.data.AUTOTUNE)
+    )
+    test_dataset = tf.data.Dataset.from_tensor_slices((testX, testY))
+    test_dataset = (
+        test_dataset.shuffle(test_dataset.cardinality())
+        .batch(BATCH_SIZE)
+        .prefetch(tf.data.AUTOTUNE)
+    )
 
-    # le dim che stanno in top_K le prendo da perturbed, quelle che non stanno da previous_perturbed
-    mask = set_value(np.zeros_like(previous_perturbed), axis_index[axis], top_K, 1)
-    previous_perturbed = np.where(mask, perturbed, previous_perturbed)
-    plot_perturbations(
-        perturbed,
-        previous_perturbed,
-        name=axis,
-        label1="Perturbed",
-        label2="Kept for next level",
-    )  # debug
+    # Training loop
+    train_steps_per_epoch = None
+    test_steps_per_epoch = None
+    for epoch in range(EPOCHS):
+        step = 0
+        total_loss = 0.0
+        pbar = tqdm(train_dataset, total=train_steps_per_epoch)
+        for X, y in pbar:
+            step += 1
+            total_loss += metamasker.train_step(X)
 
-    plot_importance(global_metrics, axis)
+            pbar.set_description(
+                f"[Epoch {epoch+1}/{EPOCHS}] Train Loss: {total_loss / step:.4f}"
+            )
 
-    mfp, mfm, pfp, pfm = compute_fidelity(axis, top_K, model)
-    sparsity = 1 - (len(top_K) / int(dataset_config[dataset_name][axis]))
-    results.append((axis, mfp, mfm, pfp, pfm, sparsity))
-    # plot_rankings(rankings, axis)
-    # plot_perturbations(testX[-1], perturbed)
-    # plot_predictions(pred, preds_perturbed, axis)
+            metric_values = metamasker.evaluate_metrics(X, y)
+            print(metric_values)
+        train_steps_per_epoch = step
 
-print(
-    f"{'Axis and selected dims':<60} -> {'Model F+':<8} {'Model F-':<8} {'Phenom F+':<8} {'Phenom F-':<8} {'Sparsity':<8}"
-)
-print(
-    f"{f'Features: {top_Ks[0]}':<60} -> {results[0][1]:<8.3f} {results[0][2]:<8.3f} {results[0][3]:<8.3f} {results[0][4]:<8.3f} {results[0][5]:<8.3f}"
-)
-print(
-    f"{f'Timesteps: {top_Ks[1]}':<60} -> {results[1][1]:<8.3f} {results[1][2]:<8.3f} {results[1][3]:<8.3f} {results[1][4]:<8.3f} {results[1][5]:<8.3f}"
-)
-print(
-    f"{f'Nodes: {top_Ks[2]}':<60} -> {results[2][1]:<8.3f} {results[2][2]:<8.3f} {results[2][3]:<8.3f} {results[2][4]:<8.3f} {results[2][5]:<8.3f}"
-)
+        pbar = tqdm(test_dataset, total=test_steps_per_epoch)
+        for X, _ in pbar:
+            step += 1
+            total_loss += metamasker.test_step(X)
+            pbar.set_description(
+                f"[Epoch {epoch+1}/{EPOCHS}] Test Loss: {total_loss / step:.4f}"
+            )
+        test_steps_per_epoch = step - train_steps_per_epoch
 
-results_path = "results"
-if not os.path.exists(results_path):
-    os.makedirs(results_path)
-results_df = pd.DataFrame(
-    results,
-    columns=["Level", "Model F+", "Model F-", "Phenom F+", "Phenom F-", "Sparsity"],
-)
-results_df.to_csv(f"{results_path}/{args.model}-{args.dataset}.csv")
+    # Evaluation
+    pbar = tqdm(test_dataset, total=test_steps_per_epoch)
+    for X, y in pbar:
+        metrics = metamasker.evaluate_metrics(X, y)
+        metrics_str = ", ".join([f"{k}: {v:.4f}" for k, v in metrics.items()])
+        pbar.set_description(metrics_str)
+    print(metrics_str)
+
+if args.pert:
+    top_Ks = []
+    results = []
+    previous_perturbed = testX[-1]
+    for level in ["features", "timesteps", "nodes"]:
+        axis = level
+
+        pred, perturbed, preds_perturbed, global_metrics, avg_ranking = (
+            perturb_and_pred(previous_perturbed, axis)
+        )
+
+        top_K = compute_elbow(global_metrics)
+        print(top_K)
+        top_Ks.append(top_K)
+
+        # le dim che stanno in top_K le prendo da perturbed, quelle che non stanno da previous_perturbed
+        mask = set_value(np.zeros_like(previous_perturbed), axis_index[axis], top_K, 1)
+        previous_perturbed = np.where(mask, perturbed, previous_perturbed)
+        plot_perturbations(
+            perturbed,
+            previous_perturbed,
+            name=axis,
+            label1="Perturbed",
+            label2="Kept for next level",
+        )  # debug
+
+        plot_importance(global_metrics, axis)
+
+        mfp, mfm, pfp, pfm = compute_fidelity(axis, top_K, model)
+        sparsity = 1 - (len(top_K) / int(dataset_config[dataset_name][axis]))
+        results.append((axis, mfp, mfm, pfp, pfm, sparsity))
+        # plot_rankings(rankings, axis)
+        # plot_perturbations(testX[-1], perturbed)
+        # plot_predictions(pred, preds_perturbed, axis)
+
+    print(
+        f"{'Axis and selected dims':<60} -> {'Model F+':<8} {'Model F-':<8} {'Phenom F+':<8} {'Phenom F-':<8} {'Sparsity':<8}"
+    )
+    print(
+        f"{f'Features: {top_Ks[0]}':<60} -> {results[0][1]:<8.3f} {results[0][2]:<8.3f} {results[0][3]:<8.3f} {results[0][4]:<8.3f} {results[0][5]:<8.3f}"
+    )
+    print(
+        f"{f'Timesteps: {top_Ks[1]}':<60} -> {results[1][1]:<8.3f} {results[1][2]:<8.3f} {results[1][3]:<8.3f} {results[1][4]:<8.3f} {results[1][5]:<8.3f}"
+    )
+    print(
+        f"{f'Nodes: {top_Ks[2]}':<60} -> {results[2][1]:<8.3f} {results[2][2]:<8.3f} {results[2][3]:<8.3f} {results[2][4]:<8.3f} {results[2][5]:<8.3f}"
+    )
+
+    results_path = "results"
+    if not os.path.exists(results_path):
+        os.makedirs(results_path)
+    results_df = pd.DataFrame(
+        results,
+        columns=["Level", "Model F+", "Model F-", "Phenom F+", "Phenom F-", "Sparsity"],
+    )
+    results_df.to_csv(f"{results_path}/{args.model}-{args.dataset}.csv")
