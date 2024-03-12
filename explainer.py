@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import sklearn
 import argparse
 import numpy as np
@@ -24,12 +25,12 @@ assert len(logical_devices) == len(physical_devices) - 1
 sys.path.append(os.path.join(os.getcwd(), ".."))
 sys.path.append(os.path.join(os.getcwd(), "lib"))
 
-from utils.sequence import obs2seqs
+from pytftk.sequence import obs2seqs
+from pytftk.arrays import set_value, powerset
 from models.LSTM import LSTM
 from models.SVD_LSTM import SVD_LSTM
 from models.CNN_LSTM import CNN_LSTM
 from models.GCN_LSTM import GCN_LSTM
-from utils.arrays import set_value, powerset
 from perturbation_strategies import (
     PlusMinusSigmaPerturbationStrategy,
     NormalPerturbationStrategy,
@@ -56,9 +57,10 @@ def create_timeseries(dataset, test_indexes):
     horizon = dataset_config[dataset_name]["timesteps"]
     X, Y = obs2seqs(dataset, horizon, horizon, horizon)
 
-    test_indexes = test_indexes - horizon // horizon  # l'indice è da quando parte
+    # test_indexes = test_indexes - horizon // horizon  # l'indice è da quando parte
     trainX = X
     trainY = Y
+
     testX = X[test_indexes]
     testY = Y[test_indexes]
 
@@ -67,6 +69,12 @@ def create_timeseries(dataset, test_indexes):
     testY = testY[..., 0]
 
     return (trainX, trainY, testX, testY, test_indexes)
+
+
+def create_timeseries_v2(dataset):
+    horizon = dataset_config[dataset_name]["timesteps"]
+    X, Y = obs2seqs(dataset, horizon, horizon, horizon)
+    return X, Y
 
 
 def create_adj(adj_path=None):
@@ -130,8 +138,18 @@ argparser.add_argument(
     "--topk", action="store", type=int, help="Set the amount of top dims to take."
 )
 argparser.add_argument(
-    "-r", "--run-name", help="Run name. Mainly for folder name purposes."
+    "-r", "--run-name", default="tmp", help="Run name. Mainly for folder name purposes."
 )
+argparser.add_argument("--lr", type=float, default=1e-3)
+argparser.add_argument("--bs", type=int, default=4)
+argparser.add_argument("--epochs", type=int, default=5)
+argparser.add_argument(
+    "-d",
+    "--test-date",
+    type=int,
+    help="Load the predictive model weights trained until the sequence before the test date with this index.",
+)
+
 args = argparser.parse_args()
 axis_index = {"timesteps": 0, "nodes": 1, "features": 2}
 axis_order = ["features", "timesteps", "nodes"]
@@ -178,6 +196,7 @@ dataset = np.load(os.path.join("data", dataset_name, dataset_name + ".npz"))["da
 adj = create_adj(os.path.join("data", dataset_name, f"closeness-{dataset_name}.npy"))
 test_indexes = np.load(os.path.join("data", dataset_name, dataset_name + "_0.1.npy"))
 trainX, trainY, testX, testY, test_indexes = create_timeseries(dataset, test_indexes)
+X, Y = create_timeseries_v2(dataset)
 
 # MODEL CONFIGURATION
 model_name = args.model
@@ -238,8 +257,16 @@ model = model_config[model_name]["class"](
 model.compile(run_eagerly=True)
 
 # Load model weights
-model_weights_path = f"saved_models/{model_name}-{dataset_name}-{dataset_config[dataset_name]['test_dates'] - 1}.h5"
+if args.test_date is None:
+    # take the last saved version
+    files = os.listdir(f"saved_models/{model_name}-{dataset_name}")
+    args.test_date = int(sorted([os.path.splitext(i)[0] for i in files])[-1])
+    print(f"[INFO] args.test_date was None and has been set to {args.test_date}.")
+
+model_weights_path = f"saved_models/{model_name}-{dataset_name}/{args.test_date}.h5"
 model(trainX[:1])
+for layer in model.layers:
+    print(layer)
 model.load_weights(model_weights_path)
 
 
@@ -746,15 +773,12 @@ if args.lime:
     print(f"{mfp:<8.3f} {mfm:<8.3f} {pfp:<8.3f} {pfm:<8.3f} {sparsity:<8.3f}")
 
 
-if args.gd:
-    LEARNING_RATE = 0.01
-    BATCH_SIZE = 4
-    EPOCHS = 10
-
+def train_and_evaluate_metamasker(X, Y, test_date):
+    
     # Initialize meta-model
     metamasker = MetaMasker(model, run_name=args.run_name)
     metamasker.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr),
         loss=SparsityAwareModelFidelityLoss(),
     )
     metamasker.track_metrics(
@@ -769,54 +793,111 @@ if args.gd:
     )
 
     # Prepare dataset for training
-    train_dataset = tf.data.Dataset.from_tensor_slices((trainX, trainY))
-    train_dataset = (
-        train_dataset.shuffle(train_dataset.cardinality())
-        .batch(BATCH_SIZE)
+    dataset = (
+        tf.data.Dataset.from_tensor_slices((X, Y))
+        .take(test_date)
+        .shuffle(test_date)
+        .batch(args.bs)
         .prefetch(tf.data.AUTOTUNE)
     )
-    test_dataset = tf.data.Dataset.from_tensor_slices((testX, testY))
-    test_dataset = (
-        test_dataset.shuffle(test_dataset.cardinality())
-        .batch(BATCH_SIZE)
-        .prefetch(tf.data.AUTOTUNE)
+    test = tf.data.Dataset.from_tensor_slices((X, Y)).skip(test_date).take(1).batch(1)
+
+    # <-- Deprecating
+    # train_dataset = tf.data.Dataset.from_tensor_slices((trainX, trainY))
+    # train_dataset = (
+    #     train_dataset.shuffle(train_dataset.cardinality())
+    #     .batch(args.bs)
+    #     .prefetch(tf.data.AUTOTUNE)
+    # )
+    # test_dataset = tf.data.Dataset.from_tensor_slices((testX, testY))
+    # test_dataset = (
+    #     test_dataset.shuffle(test_dataset.cardinality())
+    #     .batch(args.bs)
+    #     .prefetch(tf.data.AUTOTUNE)
+    # )
+    # -->
+
+    # Create run folder if it doesn't exist
+    run_folder = os.path.join(
+        "saved_models", "metamasker", f"{args.model}-{args.dataset}", f"{test_date}"
     )
+    if not os.path.exists(run_folder):
+        os.makedirs(run_folder)
+
+    # Try to load current conf
+    conf_path = os.path.join(run_folder, "conf.json")
+    if os.path.exists(conf_path):
+        print("Trying to load previous conf...")
+        print("[TODO] Not implemented yet.")
+
+    # Load weights if they exist
+    weights_path = os.path.join(run_folder, "weights.h5")
+    if os.path.exists(weights_path):
+        print("Calling metamasker to initialize weights...")
+        for x, _ in test:
+            metamasker(x)
+        metamasker.load_weights(weights_path)
+        print(f"Metamasker weights loaded from {weights_path}.")
 
     # Training loop
     train_steps_per_epoch = None
-    test_steps_per_epoch = None
-    for epoch in range(EPOCHS):
+    # test_steps_per_epoch = None
+    for epoch in range(args.epochs):
         step = 0
         total_loss = 0.0
-        pbar = tqdm(train_dataset, total=train_steps_per_epoch)
-        for X, y in pbar:
+        pbar = tqdm(dataset, total=train_steps_per_epoch)
+        for x, y in pbar:
             step += 1
-            total_loss += metamasker.train_step(X)
+            total_loss += metamasker.train_step(x)
 
             pbar.set_description(
-                f"[Epoch {epoch+1}/{EPOCHS}] Train Loss: {total_loss / step:.4f}"
+                f"[Epoch {epoch+1}/{args.epochs}] Train Loss: {total_loss / step:.4f}"
             )
 
-            metric_values = metamasker.evaluate_metrics(X, y)
+            metric_values = metamasker.evaluate_metrics(x, y)
             print(metric_values)
         train_steps_per_epoch = step
 
-        pbar = tqdm(test_dataset, total=test_steps_per_epoch)
-        for X, _ in pbar:
-            step += 1
-            total_loss += metamasker.test_step(X)
-            pbar.set_description(
-                f"[Epoch {epoch+1}/{EPOCHS}] Test Loss: {total_loss / step:.4f}"
-            )
-        test_steps_per_epoch = step - train_steps_per_epoch
+        # Save weights
+        metamasker.save_weights(weights_path)
+        print(f"Metamasker weights saved to {weights_path}.")
+
+        # <-- deprecating
+        for x, y in test:
+            test_loss = metamasker.test_step(x)
+            print(f"[Epoch] {epoch + 1}/{args.epoch}] Test Loss: {test_loss:.4f}")
+        # pbar = tqdm(test_dataset, total=test_steps_per_epoch)
+        # for X, _ in pbar:
+        #     step += 1
+        #     total_loss += metamasker.test_step(X)
+        #     pbar.set_description(
+        #         f"[Epoch {epoch+1}/{args.epochs}] Test Loss: {total_loss / step:.4f}"
+        #     )
+        # test_steps_per_epoch = step - train_steps_per_epoch
+        # -->
 
     # Evaluation
-    pbar = tqdm(test_dataset, total=test_steps_per_epoch)
-    for X, y in pbar:
-        metrics = metamasker.evaluate_metrics(X, y)
-        metrics_str = ", ".join([f"{k}: {v:.4f}" for k, v in metrics.items()])
-        pbar.set_description(metrics_str)
-    print(metrics_str)
+    for x, y in test:  # there should be only 1 element
+        metrics = metamasker.evaluate_metrics(x, y)
+    print(metrics)
+    metrics_path = os.path.join(run_folder, "metrics.json")
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dumps(metrics, f, ensure_ascii=False, indent=4)
+    return metrics
+
+    # pbar = tqdm(test_dataset, total=test_steps_per_epoch)
+    # for X, y in pbar:
+    #     metrics = metamasker.evaluate_metrics(X, y)
+    #     metrics_str = ", ".join([f"{k}: {v:.4f}" for k, v in metrics.items()])
+    #     pbar.set_description(metrics_str)
+    # print(metrics_str)
+    # return metrics
+
+
+if args.gd:
+    metrics = train_and_evaluate_metamasker(X, Y, args.test_date)
+    print(metrics)
+
 
 if args.pert:
     top_Ks = []

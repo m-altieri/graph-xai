@@ -16,7 +16,7 @@ sys.path.append("/lustrehome/altieri/research/src/lib")
 from lib.spektral_utilities import *
 from lib.spektral_gcn import GraphConv
 
-import utils.autocorrelation
+import pytftk.autocorrelation
 import matplotlib.pyplot as plt
 
 
@@ -42,7 +42,7 @@ class GAP_LSTM(tf.keras.Model):
             print(f"{__name__} initializing with conf={conf}, adj shape={adj.shape}")
 
         self.probe = conf.get("probe")
-        self.logbook = utils.autocorrelation.Logbook()
+        self.logbook = pytftk.autocorrelation.Logbook()
 
         self.input_layer = tf.keras.layers.InputLayer(
             input_shape=(conf.get("h"), conf.get("n"), conf.get("f")), dtype=tf.float64
@@ -90,7 +90,7 @@ class GAP_LSTM(tf.keras.Model):
         if self.probe:
             self.logbook.new()
             self.logbook.register(
-                "I", (I := utils.autocorrelation.morans_I(x[:, 0], self.adj))
+                "I", (I := pytftk.autocorrelation.morans_I(x[:, 0], self.adj))
             )
             self.logger.critical(f"Moran's I @ {'input':<8} : {I:.3f}")
 
@@ -550,7 +550,7 @@ class GCNLSTM_Cell(tf.keras.layers.Layer):
         h = o * tf.math.tanh(c)
 
         if self.is_encoder and self.probe:
-            logbook.register("I", utils.autocorrelation.morans_I(fx, adj))
+            logbook.register("I", pytftk.autocorrelation.morans_I(fx, adj))
 
         if self.has_memory_state:
             # le GCN di h e m vengono sommate, non concatenate;

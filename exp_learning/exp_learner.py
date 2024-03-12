@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from utils.logging import TBManager
+from pytftk.logbooks import TBManager
 
 
 class MetaMasker(tf.keras.Model):

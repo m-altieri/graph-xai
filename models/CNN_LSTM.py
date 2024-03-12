@@ -8,10 +8,11 @@ Original file is located at
 """
 
 import os
-import tensorflow as tf
-import numpy as np
 import logging
-import utils.autocorrelation
+import numpy as np
+import tensorflow as tf
+
+import pytftk.autocorrelation
 
 
 class CNN_LSTM(tf.keras.Model):
@@ -37,27 +38,32 @@ class CNN_LSTM(tf.keras.Model):
         self.features = features
         self.P = prediction_steps
 
+        self.autocorrelation = kwargs.get("autocorrelation", False)
+
         self.CNN = tf.keras.layers.Conv1D(
-            filters=self.nodes * self.features, kernel_size=1
+            filters=(
+                self.nodes * self.features if self.autocorrelation else self.features
+            ),
+            kernel_size=1,
         )  # REVERT era filters = self.features
         self.cell = tf.keras.layers.LSTMCell(
-            self.nodes * self.features
+            self.nodes * self.features if self.autocorrelation else self.features
         )  # REVERT self.features
         self.dense = tf.keras.layers.Dense(self.nodes)
         self.adj = kwargs.get("adj")
 
         self.logger.info(__name__ + " initialized.")
 
-        self.probe = kwargs.get("probe")
-        self.logbook = utils.autocorrelation.Logbook()
+        if self.autocorrelation:
+            self.logbook = pytftk.autocorrelation.Logbook()
 
     def call(self, inputs):
         B, H, N, F = inputs.shape
 
-        if self.probe:
+        if self.autocorrelation:
             self.logbook.new()
             self.logbook.register(
-                "I", (I := utils.autocorrelation.morans_I(inputs[:, 0], self.adj))
+                "I", (I := pytftk.autocorrelation.morans_I(inputs[:, 0], self.adj))
             )
             print(I)
 
@@ -67,8 +73,8 @@ class CNN_LSTM(tf.keras.Model):
 
         preds = []
         carry = [
-            tf.zeros((B, N * F)),  # REVERT era F
-            tf.zeros((B, N * F)),  # REVERT era F
+            tf.zeros((B, N * F if self.autocorrelation else F)),  # REVERT era F
+            tf.zeros((B, N * F if self.autocorrelation else F)),  # REVERT era F
         ]  # Initial states, matrici di 0 da [B, F]
 
         for h in range(H):
@@ -76,11 +82,11 @@ class CNN_LSTM(tf.keras.Model):
                 inputs[:, h, :], carry
             )  # Memory: [B, F], Carry: [2, [B, F]]; memory e carry[0] sono identici
 
-            if self.probe:
+            if self.autocorrelation:
                 self.logbook.register(
                     "I",
                     (
-                        I := utils.autocorrelation.morans_I(
+                        I := pytftk.autocorrelation.morans_I(
                             tf.reshape(memory, (B, N, F)), self.adj
                         )
                     ),
@@ -95,7 +101,7 @@ class CNN_LSTM(tf.keras.Model):
         res = tf.transpose(preds, perm=[1, 0, 2])  # [B, P, F]
         res = self.dense(res)  # [B, P, N]
 
-        if self.probe:
+        if self.autocorrelation:
             path = f"../spatial_ac/CNN-LSTM-{self.nodes}"
             if not os.path.exists(path):
                 os.makedirs(path)

@@ -1,20 +1,25 @@
-import os
-import logging
-import numpy as np
-import tensorflow as tf
-import matplotlib.pyplot as plt
+# -*- coding: utf-8 -*-
+"""LSTM
+"""
 
-import utils.autocorrelation
+import tensorflow as tf
+import keras.layers
+import numpy as np
+import logging
+import pytftk.autocorrelation
+import matplotlib.pyplot as plt
+import os
 
 
 class LSTM(tf.keras.Model):
+    """
+    Multivariata, per ora multi-nodo (concateno le feature di ogni nodo tutte insieme). Predico P x N (un valore (produzione) per ogni nodo, per ogni prediction step), tramite
+    un layer dense, che prende l'output della LSTM (ovvero P x N*F) e converte in P x N.
+    L'output della LSTM consiste della concatenazione degli hidden state per ogni prediction step (P hidden state, ognuno da N*F).
+    """
 
     def __init__(self, nodes, features, prediction_steps, **kwargs):
-        """
-        Multivariata, per ora multi-nodo (concateno le feature di ogni nodo tutte insieme). Predico P x N (un valore (produzione) per ogni nodo, per ogni prediction step), tramite
-        un layer dense, che prende l'output della LSTM (ovvero P x N*F) e converte in P x N.
-        L'output della LSTM consiste della concatenazione degli hidden state per ogni prediction step (P hidden state, ognuno da N*F).
-        """
+        """ """
         super().__init__()
 
         self.logger = logging.getLogger(__name__)
@@ -23,6 +28,8 @@ class LSTM(tf.keras.Model):
         self.nodes = nodes
         self.features = features
         self.P = prediction_steps
+
+        self.autocorrelation = kwargs.get("autocorrelation", False)
 
         self.dense1 = tf.keras.layers.Dense(self.features)
 
@@ -33,12 +40,12 @@ class LSTM(tf.keras.Model):
         # Se è GRU
         if self.is_GRU:
             self.cell = tf.keras.layers.GRUCell(
-                self.features
-            )  # ORIGINARIAMENTE features, reso node * features per moran
+                self.nodes * self.features if self.autocorrelation else self.features
+            )
         else:
             self.cell = tf.keras.layers.LSTMCell(
-                self.features
-            )  # ORIGINARIAMENTE features, reso node * features per moran
+                self.nodes * self.features if self.autocorrelation else self.features
+            )
 
         # Se ha l'attention
         if self.has_attention:
@@ -62,26 +69,24 @@ class LSTM(tf.keras.Model):
             inputs = tf.concat([inputs, reversed], 1)  # [B, 2*H, N*F]
             H *= 2
 
-        inputs = self.dense1(
-            inputs
-        )  # [B,H,F] ORIGINARIAMENTE non commentato, commentato per moran
+        if not self.autocorrelation:
+            inputs = self.dense1(inputs)  # [B,H,F] ERA non commentato
 
         preds = []
         carry = [
-            tf.zeros((B, F)),
-            tf.zeros((B, F)),
-        ]  # Initial states, matrici di 0 da [B, F] ORIGINARIAMENTE B, F, reso B, N*F per moran
+            tf.zeros((B, N * F if self.autocorrelation else F)),
+            tf.zeros((B, N * F if self.autocorrelation else F)),
+        ]  # Initial states, matrici di 0 da [B, F] ERA B, F
         encoder_states = []
 
-        # ########## LOG SPATIAL AUTOCORRELATION ##########
-        # self.step += 1
-        # Is = []
-        # I = utils.autocorrelation.morans_I(
-        #     tf.reshape(inputs[:, 0], (B, N, F)), self.adj
-        # )
-        # Is.append(I)
-        # self.logger.critical(f"Moran's I @ step {0:<2} : {I:.3f}")
-        # ########## LOG SPATIAL AUTOCORRELATION ##########
+        if self.autocorrelation:
+            self.step += 1
+            Is = []
+            I = pytftk.autocorrelation.morans_I(
+                tf.reshape(inputs[:, 0], (B, N, F)), self.adj
+            )
+            Is.append(I)
+            self.logger.critical(f"Moran's I @ step {0:<2} : {I:.3f}")
 
         for h in range(H):
             memory, carry = self.cell(
@@ -89,21 +94,28 @@ class LSTM(tf.keras.Model):
             )  # Memory: [B, F], Carry: [2, [B, F]]; memory e carry[0] sono identici
             encoder_states.append(memory)  # [h, [B, F]]
 
-            # ########## LOG SPATIAL AUTOCORRELATION ##########
-            # I = utils.autocorrelation.morans_I(tf.reshape(memory, (B, N, F)), self.adj)
-            # Is.append(I)
-            # self.logger.critical(f"Moran's I @ step {h+1:<2} : {I:.3f}")
-            # with self.tb_writer.as_default():
-            #     tf.summary.scalar("I", Is[-1] - Is[0], step=self.step)
+            if self.autocorrelation:
+                I = pytftk.autocorrelation.morans_I(
+                    tf.reshape(memory, (B, N, F)), self.adj
+                )
+                Is.append(I)
+                self.logger.critical(f"Moran's I @ step {h+1:<2} : {I:.3f}")
+                with self.tb_writer.as_default():
+                    tf.summary.scalar("I", Is[-1] - Is[0], step=self.step)
 
-        # plt.plot(
-        #     list(range(H + 1)), np.array(Is), linewidth=0.1, color="black", alpha=0.4
-        # )
-        # path = "../spatial_ac/LSTM"
-        # plt.xticks(range(H + 1))
-        # plt.savefig(os.path.join(path, f"LSTM.png"))
-        # encoder_states = tf.stack(encoder_states, axis=1)  # controllare [B, H, F]
-        # ########## LOG SPATIAL AUTOCORRELATION ##########
+        if self.autocorrelation:
+            plt.plot(
+                list(range(H + 1)),
+                np.array(Is),
+                linewidth=0.1,
+                color="black",
+                alpha=0.4,
+            )
+            path = "../spatial_ac/LSTM"
+            plt.xticks(range(H + 1))
+            plt.savefig(os.path.join(path, f"LSTM.png"))
+
+        encoder_states = tf.stack(encoder_states, axis=1)  # controllare [B, H, F]
 
         for p in range(self.P):
             if self.has_attention:

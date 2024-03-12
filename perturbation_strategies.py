@@ -7,7 +7,7 @@ import scipy.stats
 from abc import ABC, abstractmethod
 
 sys.path.insert(1, os.path.join(sys.path[0], ".."))
-from utils.arrays import set_value, get_value
+from pytftk.arrays import set_value, get_value
 
 
 class PerturbationStrategy(ABC):
@@ -89,9 +89,11 @@ class NormalPerturbationStrategy(PerturbationStrategy):
         std = (
             np.std(slice) * intensity
             if perturbation_type == "stddev"
-            else np.mean(slice) * intensity
-            if perturbation_type == "relative"
-            else intensity
+            else (
+                np.mean(slice) * intensity
+                if perturbation_type == "relative"
+                else intensity
+            )
         )
         return set_value(
             sequence,

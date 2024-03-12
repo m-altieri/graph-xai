@@ -112,6 +112,8 @@ class PhenomenonFidelityPlus(Metric):
         pred_on_nonrelevant,
         **kwargs,
     ):
+        print(phenomenon.shape)
+        print(pred_on_original.shape)
         fidelity = tf.reduce_mean(
             tf.abs(
                 tf.math.subtract(
