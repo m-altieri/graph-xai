@@ -19,14 +19,11 @@ import tensorflow as tf
 
 physical_devices = tf.config.list_physical_devices("GPU")
 tf.config.set_visible_devices(physical_devices[:1], "GPU")
-logical_devices = tf.config.list_logical_devices("GPU")
-assert len(logical_devices) == len(physical_devices) - 1
-
-sys.path.append(os.path.join(os.getcwd(), ".."))
-sys.path.append(os.path.join(os.getcwd(), "lib"))
+assert len(tf.config.list_logical_devices("GPU")) == 1
 
 from pytftk.sequence import obs2seqs
 from pytftk.arrays import set_value, powerset
+from pytftk.dicts import dict_join
 from models.LSTM import LSTM
 from models.SVD_LSTM import SVD_LSTM
 from models.CNN_LSTM import CNN_LSTM
@@ -149,6 +146,7 @@ argparser.add_argument(
     type=int,
     help="Load the predictive model weights trained until the sequence before the test date with this index.",
 )
+argparser.add_argument("--run-tb", action="store_true")
 
 args = argparser.parse_args()
 axis_index = {"timesteps": 0, "nodes": 1, "features": 2}
@@ -265,8 +263,7 @@ if args.test_date is None:
 
 model_weights_path = f"saved_models/{model_name}-{dataset_name}/{args.test_date}.h5"
 model(trainX[:1])
-for layer in model.layers:
-    print(layer)
+print(model.layers)
 model.load_weights(model_weights_path)
 
 
@@ -774,9 +771,9 @@ if args.lime:
 
 
 def train_and_evaluate_metamasker(X, Y, test_date):
-    
+
     # Initialize meta-model
-    metamasker = MetaMasker(model, run_name=args.run_name)
+    metamasker = MetaMasker(model, run_name=args.run_name, run_tb=args.run_tb)
     metamasker.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=args.lr),
         loss=SparsityAwareModelFidelityLoss(),
@@ -802,21 +799,6 @@ def train_and_evaluate_metamasker(X, Y, test_date):
     )
     test = tf.data.Dataset.from_tensor_slices((X, Y)).skip(test_date).take(1).batch(1)
 
-    # <-- Deprecating
-    # train_dataset = tf.data.Dataset.from_tensor_slices((trainX, trainY))
-    # train_dataset = (
-    #     train_dataset.shuffle(train_dataset.cardinality())
-    #     .batch(args.bs)
-    #     .prefetch(tf.data.AUTOTUNE)
-    # )
-    # test_dataset = tf.data.Dataset.from_tensor_slices((testX, testY))
-    # test_dataset = (
-    #     test_dataset.shuffle(test_dataset.cardinality())
-    #     .batch(args.bs)
-    #     .prefetch(tf.data.AUTOTUNE)
-    # )
-    # -->
-
     # Create run folder if it doesn't exist
     run_folder = os.path.join(
         "saved_models", "metamasker", f"{args.model}-{args.dataset}", f"{test_date}"
@@ -841,7 +823,6 @@ def train_and_evaluate_metamasker(X, Y, test_date):
 
     # Training loop
     train_steps_per_epoch = None
-    # test_steps_per_epoch = None
     for epoch in range(args.epochs):
         step = 0
         total_loss = 0.0
@@ -855,7 +836,7 @@ def train_and_evaluate_metamasker(X, Y, test_date):
             )
 
             metric_values = metamasker.evaluate_metrics(x, y)
-            print(metric_values)
+            # print(metric_values)
         train_steps_per_epoch = step
 
         # Save weights
@@ -865,38 +846,56 @@ def train_and_evaluate_metamasker(X, Y, test_date):
         # <-- deprecating
         for x, y in test:
             test_loss = metamasker.test_step(x)
-            print(f"[Epoch] {epoch + 1}/{args.epoch}] Test Loss: {test_loss:.4f}")
-        # pbar = tqdm(test_dataset, total=test_steps_per_epoch)
-        # for X, _ in pbar:
-        #     step += 1
-        #     total_loss += metamasker.test_step(X)
-        #     pbar.set_description(
-        #         f"[Epoch {epoch+1}/{args.epochs}] Test Loss: {total_loss / step:.4f}"
-        #     )
-        # test_steps_per_epoch = step - train_steps_per_epoch
+            print(f"[Epoch] {epoch + 1}/{args.epochs}] Test Loss: {test_loss:.4f}")
         # -->
 
     # Evaluation
     for x, y in test:  # there should be only 1 element
         metrics = metamasker.evaluate_metrics(x, y)
-    print(metrics)
-    metrics_path = os.path.join(run_folder, "metrics.json")
-    with open(metrics_path, "w", encoding="utf-8") as f:
-        json.dumps(metrics, f, ensure_ascii=False, indent=4)
-    return metrics
+        for k in metrics:
+            metrics[k] = metrics[k].numpy()
+    metrics_path = os.path.join(run_folder, "metrics.csv")
 
-    # pbar = tqdm(test_dataset, total=test_steps_per_epoch)
-    # for X, y in pbar:
-    #     metrics = metamasker.evaluate_metrics(X, y)
-    #     metrics_str = ", ".join([f"{k}: {v:.4f}" for k, v in metrics.items()])
-    #     pbar.set_description(metrics_str)
-    # print(metrics_str)
-    # return metrics
+    # Save metrics
+    mfp = metrics["model_fidelity+"]
+    mfm = metrics["model_fidelity-"]
+    pfp = metrics["phenomenon_fidelity+"]
+    pfm = metrics["phenomenon_fidelity-"]
+    s = metrics["sparsity"]
+    return {
+        "model": args.model,
+        "dataset": args.dataset,
+        "date": test_date,
+        "mfp": mfp,
+        "mfm": mfm,
+        "pfp": pfp,
+        "pfm": pfm,
+        "s": s,
+    }
 
 
 if args.gd:
-    metrics = train_and_evaluate_metamasker(X, Y, args.test_date)
-    print(metrics)
+    # metrics = train_and_evaluate_metamasker(X, Y, args.test_date)
+
+    all_metrics = {}
+
+    test_dates = np.load(f"data/{args.dataset}/test_dates/{args.dataset}-10-m0.5.npy")
+    print(test_dates)
+    for date in test_dates:
+        run_metrics = train_and_evaluate_metamasker(X, Y, date)
+        print(run_metrics)
+
+        # df = pd.DataFrame(run_metrics)
+        # df.to_csv(
+        #     f"saved_models/metamasker/{args.model}-{args.dataset}/{date}/metrics.csv"
+        # )
+
+        all_metrics = dict_join(all_metrics, run_metrics, append=True)
+        print("Results:", all_metrics)
+        resall_metrics_df = pd.DataFrame(all_metrics)
+        resall_metrics_df.to_csv(
+            f"saved_models/metamasker/{args.model}-{args.dataset}/metrics.csv"
+        )
 
 
 if args.pert:

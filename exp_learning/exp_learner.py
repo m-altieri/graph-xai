@@ -11,7 +11,7 @@ class MetaMasker(tf.keras.Model):
         "sigmoid": lambda x: tf.exp(-x) / tf.square(1 + tf.exp(-x)),
     }
 
-    def __init__(self, model, activation="linear", run_name=None):
+    def __init__(self, model, activation="linear", run_name=None, run_tb=False):
         """Straight-Through Binary Masker.
 
         Args:
@@ -24,8 +24,10 @@ class MetaMasker(tf.keras.Model):
                 f"activation must be one of {list(self._ACTIVATIONS.keys())} but is {activation}."
             )
 
+        # initialize tensorboard
         self.tb_manager = TBManager("tb", run_name=run_name or "_default")
-        self.tb_manager.run()
+        if run_tb:
+            self.tb_manager.run()
 
         self.model = model
         self.model.trainable = False
