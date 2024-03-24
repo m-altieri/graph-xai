@@ -68,8 +68,9 @@ def parse_args():
         help="Launch the TensorBoard instance for the current TensorBoard folder.",
     )
     argparser.add_argument(
-        "--eager",
+        "--graph-execution",
         action="store_true",
+        default=False,
         help="Run eargerly.",
     )
 
@@ -278,7 +279,7 @@ def build_model(model_name, test_date=None):
         *model_config[args.model].get("args"),
         **model_config[args.model].get("kwargs"),
     )
-    model.compile(run_eagerly=args.eager)
+    model.compile(run_eagerly=not args.graph_execution)
 
     # Load model weights
     if test_date is None:  # take the last saved version
