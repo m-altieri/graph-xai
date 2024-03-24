@@ -2,6 +2,10 @@ import numpy as np
 import tensorflow as tf
 
 
+def avg_sub(x1, x2):
+    return tf.reduce_mean(tf.math.abs(tf.math.subtract(x1, x2)))
+
+
 class Metric:
     def __init__(self, name):
         super().__init__()
@@ -30,8 +34,136 @@ class Metric:
         self.count.assign(0)
 
 
+class NormalizedModelFidelityPlus(Metric):
+    def __init__(self, name="nMF+"):
+        super().__init__(name)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        all_zeros = tf.zeros_like(historical)
+        model = kwargs.get("model")
+        pred_on_zeros = model(all_zeros)
+
+        mfp = avg_sub(pred_on_nonrelevant, pred_on_original)
+        mfp_zeros = avg_sub(pred_on_zeros, pred_on_original)
+        mfp_original = avg_sub(pred_on_original, pred_on_original)
+        normalized_fidelity = avg_sub(mfp, mfp_original) / avg_sub(
+            mfp_zeros, mfp_original
+        )
+
+        self.total.assign_add(normalized_fidelity)
+        self.count.assign_add(1.0)
+
+
+class NormalizedModelFidelityMinus(Metric):
+    def __init__(self, name="nMF-"):
+        super().__init__(name)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        all_zeros = tf.zeros_like(historical)
+        model = kwargs.get("model")
+        pred_on_zeros = model(all_zeros)
+
+        mfm = avg_sub(pred_on_relevant, pred_on_original)
+        mfm_zeros = avg_sub(pred_on_zeros, pred_on_original)
+        mfm_original = avg_sub(pred_on_original, pred_on_original)
+        normalized_fidelity = avg_sub(mfm, mfm_original) / avg_sub(
+            mfm_zeros, mfm_original
+        )
+
+        self.total.assign_add(normalized_fidelity)
+        self.count.assign_add(1.0)
+
+
+class NormalizedPhenomenonFidelityPlus(Metric):
+    def __init__(self, name="nPF+"):
+        super().__init__(name)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        all_zeros = tf.zeros_like(historical)
+        model = kwargs.get("model")
+        pred_on_zeros = model(all_zeros)
+
+        error_on_original = avg_sub(phenomenon[..., 0], pred_on_original)
+        error_on_nonrelevant = avg_sub(phenomenon[..., 0], pred_on_nonrelevant)
+        error_on_zeros = avg_sub(phenomenon[..., 0], pred_on_zeros)
+
+        pfp = avg_sub(error_on_original, error_on_nonrelevant)
+        pfp_zeros = avg_sub(error_on_original, error_on_zeros)
+        pfp_original = avg_sub(error_on_original, error_on_original)
+        normalized_fidelity = avg_sub(pfp, pfp_original) / avg_sub(
+            pfp_zeros, pfp_original
+        )
+
+        self.total.assign_add(normalized_fidelity)
+        self.count.assign_add(1.0)
+
+
+class NormalizedPhenomenonFidelityMinus(Metric):
+    def __init__(self, name="nPF-"):
+        super().__init__(name)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        all_zeros = tf.zeros_like(historical)
+        model = kwargs.get("model")
+        pred_on_zeros = model(all_zeros)
+
+        error_on_original = avg_sub(phenomenon[..., 0], pred_on_original)
+        error_on_relevant = avg_sub(phenomenon[..., 0], pred_on_relevant)
+        error_on_zeros = avg_sub(phenomenon[..., 0], pred_on_zeros)
+
+        pfm = avg_sub(error_on_original, error_on_relevant)
+        pfm_zeros = avg_sub(error_on_original, error_on_zeros)
+        pfm_original = avg_sub(error_on_original, error_on_original)
+        normalized_fidelity = avg_sub(pfm, pfm_original) / avg_sub(
+            pfm_zeros, pfm_original
+        )
+
+        self.total.assign_add(normalized_fidelity)
+        self.count.assign_add(1.0)
+
+
 class ModelFidelityPlus(Metric):
-    def __init__(self, name="model_fidelity+"):
+    def __init__(self, name="MF+"):
         super().__init__(name)
 
     def update_state(
@@ -52,31 +184,8 @@ class ModelFidelityPlus(Metric):
         self.count.assign_add(1.0)
 
 
-class OldModelFidelityPlus(Metric):
-    def __init__(self, name="old_model_fidelity+"):
-        super().__init__(name)
-
-    def update_state(
-        self,
-        historical,
-        phenomenon,
-        pred_on_original,
-        relevant_mask,
-        pred_on_relevant,
-        nonrelevant_mask,
-        pred_on_nonrelevant,
-        **kwargs,
-    ):
-        negative_masked_input = tf.math.multiply(historical, nonrelevant_mask)
-        fidelity = fidelity_score(
-            historical, negative_masked_input, from_seqs=True, model=kwargs["model"]
-        )
-        self.total.assign_add(fidelity)
-        self.count.assign_add(1.0)
-
-
 class ModelFidelityMinus(Metric):
-    def __init__(self, name="model_fidelity-"):
+    def __init__(self, name="MF-"):
         super().__init__(name)
 
     def update_state(
@@ -98,7 +207,7 @@ class ModelFidelityMinus(Metric):
 
 
 class PhenomenonFidelityPlus(Metric):
-    def __init__(self, name="phenomenon_fidelity+"):
+    def __init__(self, name="PF+"):
         super().__init__(name)
 
     def update_state(
@@ -125,7 +234,7 @@ class PhenomenonFidelityPlus(Metric):
 
 
 class PhenomenonFidelityMinus(Metric):
-    def __init__(self, name="phenomenon_fidelity-"):
+    def __init__(self, name="PF-"):
         super().__init__(name)
 
     def update_state(
@@ -152,7 +261,7 @@ class PhenomenonFidelityMinus(Metric):
 
 
 class Sparsity(Metric):
-    def __init__(self, name="sparsity"):
+    def __init__(self, name="S"):
         super().__init__(name)
 
     def update_state(
@@ -168,6 +277,29 @@ class Sparsity(Metric):
     ):
         sparsity_fn = lambda x: 1.0 - tf.reduce_sum(x) / tf.cast(tf.size(x), tf.float32)
         self.total.assign_add(sparsity_fn(relevant_mask))
+        self.count.assign_add(1.0)
+
+
+class OldModelFidelityPlus(Metric):
+    def __init__(self, name="old_model_fidelity+"):
+        super().__init__(name)
+
+    def update_state(
+        self,
+        historical,
+        phenomenon,
+        pred_on_original,
+        relevant_mask,
+        pred_on_relevant,
+        nonrelevant_mask,
+        pred_on_nonrelevant,
+        **kwargs,
+    ):
+        negative_masked_input = tf.math.multiply(historical, nonrelevant_mask)
+        fidelity = fidelity_score(
+            historical, negative_masked_input, from_seqs=True, model=kwargs["model"]
+        )
+        self.total.assign_add(fidelity)
         self.count.assign_add(1.0)
 
 
