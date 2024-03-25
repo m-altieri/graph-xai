@@ -131,7 +131,9 @@ class MetaMasker(tf.keras.Model):
             )
 
         # initialize tensorboard
-        self.tb_manager = TBManager("tb", run_name=run_name or "_default")
+        self.tb_manager = TBManager(
+            "tb", run_name=run_name or "_default", enabled=False
+        )
         if run_tb:
             self.tb_manager.run()
 
