@@ -9,13 +9,6 @@ import pandas as pd
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
 
-# Config GPUs
-physical_devices = tf.config.list_physical_devices("GPU")
-tf.config.set_visible_devices(physical_devices[:1], "GPU")
-devices = tf.config.list_logical_devices("GPU")
-assert len(devices) == 1
-tf.config.experimental.set_memory_growth(devices[0], True)
-
 from pytftk.dicts import dict_join
 from pytftk.sequence import obs2seqs
 
@@ -70,11 +63,9 @@ def parse_args():
         help="Launch the TensorBoard instance for the current TensorBoard folder.",
     )
     argparser.add_argument(
-        "--graph-execution",
-        action="store_true",
-        default=False,
-        help="Run eargerly.",
+        "--graph-execution", action="store_true", default=False, help="Run eargerly."
     )
+    argparser.add_argument("--gpu", type=int, default=0, help="Select the gpu to use.")
 
     # mm-only arguments
     argparser.add_argument(
@@ -176,6 +167,16 @@ def create_adj(adj_path=None):
 
 
 args = parse_args()
+
+# Config GPUs
+tf.config.set_visible_devices(
+    tf.config.list_physical_devices("GPU")[args.gpu : args.gpu + 1], "GPU"
+)
+assert len(tf.config.get_visible_devices("GPU")) == 1
+tf.config.experimental.set_memory_growth(tf.config.get_visible_devices("GPU")[0], True)
+print(
+    f"Using and enabling memory growth on device {tf.config.get_visible_devices('GPU')[0]}."
+)
 
 # DATASET CONFIGURATION
 dataset_name = args.dataset
