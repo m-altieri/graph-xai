@@ -8,3 +8,4 @@ data
 *.pyc
 tb
 **/.DS_Store
+results/*
