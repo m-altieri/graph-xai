@@ -12,7 +12,9 @@ import tensorflow as tf
 # Config GPUs
 physical_devices = tf.config.list_physical_devices("GPU")
 tf.config.set_visible_devices(physical_devices[:1], "GPU")
-assert len(tf.config.list_logical_devices("GPU")) == 1
+devices = tf.config.list_logical_devices("GPU")
+assert len(devices) == 1
+tf.config.experimental.set_memory_growth(devices[0], True)
 
 from pytftk.dicts import dict_join
 from pytftk.sequence import obs2seqs
