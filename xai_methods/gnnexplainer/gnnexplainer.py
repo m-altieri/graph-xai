@@ -36,16 +36,16 @@ class GNNExplainer:
             return getattr(self.model, name)
 
         def __call__(self, *args, **kwargs):
-            """Funge da tramite tra ciò che GNNExplainer si aspetta che il
-            modello riceva e ciò che il modello veramente riceve.
-            Nello specifico:
-            - GNNExplainer vuole dare alla call del modello
-            x e masked_adj, mentre io assegno masked_adj all'attributo adj
-            e poi alla call do solo la x;
-            - GNNExplainer vuole dare un tensore [N,F] mentre io voglio dare
-            un tensore [B,T,N,F] quindi faccio reshape
-            - GNNExplainer vuole ricevere un tensore [N,] mentre io ricevo
-            un tensore [B,P,N], quindi faccio reshape"""
+            """Acts as a bridge between what GNNExplainer expected the model to
+            receive and what the model actually receives.
+            Specifically:
+            - GNNExplainer want to give to the model's call method x and
+            masked_adj, while I assign masked_adj to the adj attribute and then
+            I only give x to the call method;
+            - GNNExplainer wants to give a [N,F] shaped tensor while I want to
+            give a [B,T,N,F] shaped tensor when I reshape;
+            - GNNExplainer wants to receive an [N,] shaped tensor while I
+            receive a [B,P,N] shaped tensor, so I reshape"""
 
             # unpack inputs
             x, masked_adj = args  # ([1,N,TF], [N,N])
@@ -73,27 +73,7 @@ class GNNExplainer:
             pass
 
     def explain(self, historical):
-        """
-        Apparentemente è difficile perchè non posso usare spatiotemporal,
-        ma in realtà neanche lime lo può usare però ce l'ho fatta comunque.
-        Devo creare semplicemente un adattatore, tipo come ho fatto su lime,
-        che avvolge il modello predittivo e gli feeda l'input arrotolandolo
-        e poi srotola l'output, facendo sembrare che il modello sia spatial
-        (per come compressare, posso o fare (N,T*F) grezzo, o (N,F), dove
-        ogni f è la f media su tutti i T, fai quello più facile. tanto se va
-        male è meglio.)
-
-        Il codice di GNNEx non lo devo toccare. Gli do ciò che vuole lui e prendo
-        qualsiasi cosa mi voglia dare, poi processo io
-
-        Il modello predittivo mal che vada glielo infilo con qualche lambda function
-        o robe così. Stealth
-
-        Come sempre, l'unica cosa che voglio è la binary mask, niente di più
-
-        -----------------
-
-        Extract the explanation mask for the current prediction.
+        """Extract the explanation mask for the current prediction.
 
         Args:
             historical (tf.Tensor): a [T,N,F] sequence tensor (unbatched).

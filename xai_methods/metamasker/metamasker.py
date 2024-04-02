@@ -93,23 +93,6 @@ class MetaMaskerHelper:
     def model(self):
         return self.metamasker.pred_model
 
-    # Deprecating
-    # def evaluate(self, x, y, mask):
-    #     if tf.rank(x) != 4:
-    #         raise ValueError(f"[ERROR] x shape must be [B,T,N,F], but is {x.shape}")
-    #     if tf.rank(y) != 4:
-    #         raise ValueError(
-    #             f"[ERROR] y shape must be [B,T,N,F] (the target feature is selected \
-    #                 at metrics computation time), but is {y.shape}"
-    #         )
-
-    #     output = {"model": self.model_name, "dataset": self.dataset_name}
-    #     metrics = self.metamasker.evaluate_metrics(x, y, mask)
-    #     for k in metrics:
-    #         output[k] = metrics[k].numpy()
-
-    #     return output
-
 
 class MetaMasker(tf.keras.Model):
 
@@ -171,7 +154,6 @@ class MetaMasker(tf.keras.Model):
 
         return tf.math.round(x), grad
 
-    # @tf.function
     def rescale_to_top_k(self, x, k):
         """_summary_
 
@@ -285,7 +267,7 @@ class MetaMasker(tf.keras.Model):
             pred_on_original = self.pred_model(inputs)
             self.tb_manager.image("pred-on-original", pred_on_original)
 
-            ### <--- ADDING FIDELITY+ TO LOSS
+            ### <--- ability to add fidelity+ to loss
             negative_mask = 1.0 - mask  # mask of non-relevant dims (0s and 1s switched)
             negative_masked_input = tf.math.multiply(
                 tf.cast(inputs, tf.float32), negative_mask
@@ -315,42 +297,6 @@ class MetaMasker(tf.keras.Model):
         self.tb_manager.scalar("test_loss", loss)
 
         return loss
-
-    # Deprecating
-    # def evaluate_metrics(self, inputs, phenomenon, mask):
-    #     # Compute everything that you need to compute all metrics
-    #     pred_on_original = self.pred_model(inputs)  # normal prediction
-    #     masked_input = tf.math.multiply(tf.cast(inputs, tf.float32), mask)
-    #     pred_on_masked = self.pred_model(masked_input)
-    #     negative_mask = 1.0 - mask  # mask of non-relevant dims (0s and 1s switched)
-    #     negative_masked_input = tf.math.multiply(
-    #         tf.cast(inputs, tf.float32), negative_mask
-    #     )
-    #     pred_on_negative_masked = self.pred_model(negative_masked_input)
-
-    #     # Cast the inputs to tf.float32 (same as all computed values)
-    #     inputs = tf.cast(inputs, tf.float32)
-    #     phenomenon = tf.cast(phenomenon, tf.float32)
-
-    #     # Compute metrics
-    #     for metric in self.tracked_metrics:
-    #         metric.update_state(
-    #             historical=inputs,  # [B,T,N,F]
-    #             phenomenon=phenomenon,  # [B,T,N]
-    #             pred_on_original=pred_on_original,  # [B,T,N]
-    #             relevant_mask=mask,  # [B,T,N,F]
-    #             pred_on_relevant=pred_on_masked,  # [B,T,N]
-    #             nonrelevant_mask=negative_mask,  # [B,T,N,F]
-    #             pred_on_nonrelevant=pred_on_negative_masked,  # [B,T,N]
-    #             model=self.pred_model,
-    #         )
-    #     metric_values = {
-    #         metric.name: metric.result() for metric in self.tracked_metrics
-    #     }
-    #     for metric, value in metric_values.items():
-    #         self.tb_manager.scalar(metric, value)
-
-    #     return metric_values
 
 
 class GAT(tf.keras.layers.Layer):

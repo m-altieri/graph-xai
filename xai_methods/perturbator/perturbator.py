@@ -1,4 +1,3 @@
-import os
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -175,33 +174,6 @@ class PerturbatorMethod:
         plt.clf()
         print("Done!")
 
-    # def plot_predictions(self, true, pred, axis):
-    #     print("Plotting predictions", end="", flush=True)
-    #     fig, axs = plt.subplots(
-    #         nrows=dataset_config[self.dataset_name]["nodes"],
-    #         ncols=dataset_config[self.dataset_name][axis],
-    #         figsize=(
-    #             dataset_config[self.dataset_name][axis] * 5,
-    #             dataset_config[self.dataset_name]["nodes"] * 5,
-    #         ),
-    #     )
-    #     for i in range(
-    #         dataset_config[self.dataset_name]["nodes"]
-    #         * dataset_config[self.dataset_name][axis]
-    #     ):
-    #         row = i // dataset_config[self.dataset_name][axis]
-    #         col = i % dataset_config[self.dataset_name][axis]
-    #         axs[row, col].plot(true[0, :, row], label="Predicted")
-    #         axs[row, col].plot(pred[col, :, row], label="Predicted on pert.")
-    #         axs[row, col].plot(testY[-1, :, row], label="True")
-    #         axs[row, col].set_title(f"Node {row}, pert. on dim {col}")
-    #         axs[row, col].set_xlabel("Time")
-    #         axs[row, col].legend(["Pred", "Pred on pert.", "True"])
-    #         print(".", end="", flush=True)
-    #     plt.savefig("plots/preds.png")
-    #     plt.clf()
-    #     print("Done!")
-
     def plot_importance(self, metrics, axis):
         # Print dim importance ranking
         # most important = comes first in descending metrics ranking = highest error
@@ -221,56 +193,6 @@ class PerturbatorMethod:
             f"plots/importance-{axis}-{self.pred_model_name}-{self.dataset_name}.pdf"
         )
         plt.clf()
-
-    # @DeprecationWarning
-    # def compute_fidelity(self, x, y, axis, top_K):
-    #     print(
-    #         f"{'Dims':<12} {'Model F+':<10} {'Model F-':<10} {'Phenom F+':<10} {'Phenom F-':<10}"
-    #     )
-    #     seq_without_dims = FixedValuePerturbationStrategy().perturb(x, axis, top_K, 0.0)
-    #     seq_only_dims = FixedValuePerturbationStrategy().perturb(
-    #         x,
-    #         axis,
-    #         [
-    #             d
-    #             for d in range(dataset_config[self.dataset_name][axis])
-    #             if d not in top_K
-    #         ],
-    #         0.0,
-    #     )
-    #     model_fidelity_plus = fidelity_score(
-    #         x, seq_without_dims, from_seqs=True, model=self.pred_model
-    #     )
-    #     model_fidelity_minus = fidelity_score(
-    #         x, seq_only_dims, from_seqs=True, model=self.pred_model
-    #     )
-    #     phenomenon_fidelity_plus = fidelity_score(
-    #         np.abs(y - self.pred_model.predict(x)),
-    #         np.abs(
-    #             y
-    #             - self.pred_model.predict(
-    #                 np.expand_dims(seq_without_dims, axis=0), verbose=0
-    #             )
-    #         ),
-    #     )
-    #     phenomenon_fidelity_minus = fidelity_score(
-    #         np.abs(y - self.pred_model.predict(x)),
-    #         np.abs(
-    #             y
-    #             - self.pred_model.predict(
-    #                 np.expand_dims(seq_only_dims, axis=0), verbose=0
-    #             )
-    #         ),
-    #     )
-    #     print(
-    #         f"{f'{top_K}':<12} {model_fidelity_plus:<10.3f} {model_fidelity_minus:<10.3f} {phenomenon_fidelity_plus:<10.3f} {phenomenon_fidelity_minus:<10.3f}"
-    #     )
-    #     return (
-    #         model_fidelity_plus,
-    #         model_fidelity_minus,
-    #         phenomenon_fidelity_plus,
-    #         phenomenon_fidelity_minus,
-    #     )
 
     def compute_elbow(self, metrics):
         # input: [dims]
@@ -346,7 +268,6 @@ class PerturbatorMethod:
         top_Ks = []
         results = []
         previous_perturbed = np.squeeze(historical, axis=0)
-        # previous_perturbed = testX[-1]
         explanation_mask = np.ones_like(previous_perturbed)
 
         for level in ["features", "timesteps", "nodes"]:
@@ -380,52 +301,3 @@ class PerturbatorMethod:
             explanation_mask = np.where(mask, explanation_mask, np.zeros_like(mask))
 
         return explanation_mask.astype(np.float32)
-
-        #     mfp, mfm, pfp, pfm = self.compute_fidelity(axis, top_K)
-        #     sparsity = 1 - (len(top_K) / int(dataset_config[self.dataset_name][axis]))
-        #     results.append((axis, mfp, mfm, pfp, pfm, sparsity))
-        #     # plot_rankings(rankings, axis)
-        #     # plot_perturbations(testX[-1], perturbed)
-        #     # plot_predictions(pred, preds_perturbed, axis)
-
-        # print(
-        #     f"{'Axis and selected dims':<60} -> {'Model F+':<8} {'Model F-':<8} {'Phenom F+':<8} {'Phenom F-':<8} {'Sparsity':<8}"
-        # )
-        # print(
-        #     f"{f'Features: {top_Ks[0]}':<60} -> {results[0][1]:<8.3f} {results[0][2]:<8.3f} {results[0][3]:<8.3f} {results[0][4]:<8.3f} {results[0][5]:<8.3f}"
-        # )
-        # print(
-        #     f"{f'Timesteps: {top_Ks[1]}':<60} -> {results[1][1]:<8.3f} {results[1][2]:<8.3f} {results[1][3]:<8.3f} {results[1][4]:<8.3f} {results[1][5]:<8.3f}"
-        # )
-        # print(
-        #     f"{f'Nodes: {top_Ks[2]}':<60} -> {results[2][1]:<8.3f} {results[2][2]:<8.3f} {results[2][3]:<8.3f} {results[2][4]:<8.3f} {results[2][5]:<8.3f}"
-        # )
-
-        # results_path = "results/pert"
-        # if not os.path.exists(results_path):
-        #     os.makedirs(results_path)
-        # results_df = pd.DataFrame(
-        #     results,
-        #     columns=[
-        #         "Level",
-        #         "Model F+",
-        #         "Model F-",
-        #         "Phenom F+",
-        #         "Phenom F-",
-        #         "Sparsity",
-        #     ],
-        # )
-        # results_df.to_csv(f"{results_path}/{self.model_name}-{self.dataset_name}.csv")
-
-    # Deprecating
-    # def evaluate(self, historical, phenomenon, mask):
-    #     """Compute metrics for the current explanation mask and prediction.
-
-    #     Args:
-    #         historical (tf.Tensor): a [B,T,N,F] tensor.
-    #         phenomenon (tf.Tensor): a [B,T,N] tensor.
-    #         mask (tf.Tensor): a [B,T,N,F] tensor.
-
-    #     Returns:
-    #         dict: the metrics for the current explanation mask and prediction.
-    #     """

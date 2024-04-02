@@ -1,13 +1,12 @@
-import pandas as pd
 import numpy as np
-from sklearn.inspection import permutation_importance
+import pandas as pd
 import matplotlib.pyplot as plt
+from sklearn.inspection import permutation_importance
 
 
 def compute_and_plot_rf_feature_importance(
     clf_model, features_testing, labels_testing, feature_names, feature_setting, outdir
 ):
-    # print(clf_model.feature_importances_)
     std = np.std([tree.feature_importances_ for tree in clf_model.estimators_], axis=0)
     forest_importances = pd.Series(clf_model.feature_importances_, index=feature_names)
     fig, ax = plt.subplots()
