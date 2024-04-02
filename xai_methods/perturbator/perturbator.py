@@ -326,6 +326,7 @@ class PerturbatorMethod:
         self.perturbation = conf.get("perturbation", "Normal")
         self.intensity = conf.get("intensity", 0.1)
         self.topk = conf.get("topk", None)
+        self.plot = conf.get("plot", False)
 
     def load_weights(self, test_date, x):
         print(f"[INFO] {__class__.__name__} has no weights to load.")
@@ -366,15 +367,15 @@ class PerturbatorMethod:
                 np.zeros_like(previous_perturbed), self.axis_index[axis], top_K, 1
             )
             previous_perturbed = np.where(mask, perturbed, previous_perturbed)
-            self.plot_perturbations(
-                perturbed,
-                previous_perturbed,
-                name=axis,
-                label1="Perturbed",
-                label2="Kept for next level",
-            )  # debug
-
-            self.plot_importance(global_metrics, axis)
+            if self.plot:
+                self.plot_perturbations(
+                    perturbed,
+                    previous_perturbed,
+                    name=axis,
+                    label1="Perturbed",
+                    label2="Kept for next level",
+                )
+                self.plot_importance(global_metrics, axis)
 
             explanation_mask = np.where(mask, explanation_mask, np.zeros_like(mask))
 

@@ -59,22 +59,30 @@ class SparsityAwareModelFidelityLoss(tf.keras.losses.Loss):
         ):
             raise ValueError()
 
+        # Fidelity- component
         fidelity_minus_loss = _LossesDefinitions._MSE_DISTANCE_MEASURE(y_true, y_pred)
+
+        # Sparsity component
         sparsity = _LossesDefinitions._SPARSITY_MEASURE(self.mask)
-        # print(f"Real sparsity: {100*sparsity:.1f}%")
-
+        alpha = 4  # "final" results use alpha = 8
         eps = 0.01
-        sparsity_loss = tf.math.log(1.0 / (sparsity + eps)) ** 8 + eps
+        sparsity_loss = tf.math.log(1.0 / (sparsity + eps)) ** alpha + eps
 
+        # Fidelity+ component
         fidelity_plus = _LossesDefinitions._MSE_DISTANCE_MEASURE(
             y_true, self.extras["pred_on_negative_masked"]
         )
-        fidelity_plus_loss = tf.math.log(1.0 / fidelity_plus)
+        # fidelity_plus_loss = tf.math.log(1.0 / fidelity_plus) ** 8
+        fidelity_plus_loss = 1.0 - fidelity_plus
 
-        # print(f"F- loss: {fidelity_minus_loss}")
-        # print(f"S loss: {sparsity_loss}")
-        # print(f"F+ loss: {fidelity_plus_loss}")
+        # Sum of components
+        loss = 0
+        loss_components = self.extras.get("loss_components", ["f-", "s"])
+        if "f-" in loss_components:
+            loss += fidelity_minus_loss
+        if "f+" in loss_components:
+            loss += fidelity_plus_loss
+        if "s" in loss_components:
+            loss += sparsity_loss
 
-        return fidelity_minus_loss + sparsity_loss
-        # return fidelity_minus_loss + sparsity_loss + fidelity_plus_loss
-        # return fidelity_plus_loss
+        return loss

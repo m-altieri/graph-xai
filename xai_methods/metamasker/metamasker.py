@@ -15,13 +15,13 @@ class MetaMaskerHelper:
         self.dataset_name = dataset_name
         self.run_name = run_name
         self.run_tb = conf.get("run_tb")
-
         self.metamasker = MetaMasker(
             pred_model,
             run_name=self.run_name,
             run_tb=self.run_tb,
             use_conv=conf.get("use_conv"),
             use_gnn=conf.get("use_gnn"),
+            top_k=conf.get("top_k"),
         )
         self.metamasker.compile(
             optimizer=tf.keras.optimizers.Adam(
@@ -29,6 +29,8 @@ class MetaMaskerHelper:
             ),
             loss=SparsityAwareModelFidelityLoss(),
         )
+        if conf.get("use_f+", False):
+            self.metamasker.loss.set_extras({"loss_components": ["f+", "s"]})
 
         # Create run folder if it doesn't exist
         self.run_folder = os.path.join(
@@ -132,7 +134,7 @@ class MetaMasker(tf.keras.Model):
 
         # initialize tensorboard
         self.tb_manager = TBManager(
-            "tb", run_name=run_name or "_default", enabled=False
+            "tb", run_name=run_name or "_default", enabled=run_tb
         )
         if run_tb:
             self.tb_manager.run()
@@ -144,6 +146,7 @@ class MetaMasker(tf.keras.Model):
 
         self.use_conv = conf.get("use_conv") is not False
         self.use_gnn = conf.get("use_gnn") is not False
+        self.top_k = conf.get("top_k", None)
 
     def build(self, input_shape):
         self.F = input_shape.as_list()[-1]
@@ -202,7 +205,7 @@ class MetaMasker(tf.keras.Model):
         sigmoid = 1.0 / (1.0 + tf.exp(-(tf.math.subtract(x, mu))))
         return sigmoid
 
-    def call(self, x, top_k=None):
+    def call(self, x):
 
         # Visualize input
         for f in range(x.shape[-1]):
@@ -248,8 +251,8 @@ class MetaMasker(tf.keras.Model):
         x, _ = tf.linalg.normalize(x, ord=np.inf, axis=-1)  # L1 norm
         x = 0.5 * (x + 1)  # reposition from [-1,1] to [0,1]
 
-        if top_k is not None:
-            x = self.rescale_to_top_k(x, top_k)
+        if self.top_k is not None:
+            x = self.rescale_to_top_k(x, self.top_k)
 
         mask = self.straight_through_round(x)
 

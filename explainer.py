@@ -1,7 +1,13 @@
 import os
 import sys
+import math
+import time
+import pynvml
 import argparse
 import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from colorama import Fore, Style
 
 np.random.seed(42)
 import pandas as pd
@@ -66,14 +72,13 @@ def parse_args():
         "--graph-execution", action="store_true", default=False, help="Run eargerly."
     )
     argparser.add_argument("--gpu", type=int, default=0, help="Select the gpu to use.")
+    argparser.add_argument(
+        "--ignore-free-gpu-check",
+        action="store_true",
+        help="Skip the GPU available memory check.",
+    )
 
     # mm-only arguments
-    argparser.add_argument(
-        "--topk",
-        action="store",
-        type=int,
-        help="Set the amount of top dims to take. Only applied if xai_method is mm.",
-    )
     argparser.add_argument(
         "--lr",
         type=float,
@@ -96,6 +101,22 @@ def parse_args():
         "--load-weights",
         action="store_true",
         help="Load the metamodel weights before training. Only applied if xai_method is mm.",
+    )
+    argparser.add_argument(
+        "--use-fp",
+        action="store_true",
+        help="Use the Fidelity+ in the loss instead of the Fidelity-.",
+    )
+    argparser.add_argument(
+        "--top-k",
+        type=float,
+        default=None,
+        help="Set a hard choice on the sparsity value externally.",
+    )
+    argparser.add_argument(
+        "--plot",
+        action="store_true",
+        help="Plot explaination masks with matplotlib. Mainly for debugging purposes.",
     )
 
     # pert-only arguments
@@ -166,17 +187,41 @@ def create_adj(adj_path=None):
     return adj
 
 
-args = parse_args()
+def config_gpus():
+    tf.config.set_visible_devices(
+        tf.config.list_physical_devices("GPU")[args.gpu : args.gpu + 1], "GPU"
+    )
+    assert len(tf.config.get_visible_devices("GPU")) == 1
+    device = tf.config.get_visible_devices("GPU")[0]
+    device_index = int(device.name[-1])
 
-# Config GPUs
-tf.config.set_visible_devices(
-    tf.config.list_physical_devices("GPU")[args.gpu : args.gpu + 1], "GPU"
-)
-assert len(tf.config.get_visible_devices("GPU")) == 1
-tf.config.experimental.set_memory_growth(tf.config.get_visible_devices("GPU")[0], True)
-print(
-    f"Using and enabling memory growth on device {tf.config.get_visible_devices('GPU')[0]}."
-)
+    tf.config.experimental.set_memory_growth(device, True)
+    print(f"Using and enabling memory growth on device {device}.")
+
+    pynvml.nvmlInit()
+    handle = pynvml.nvmlDeviceGetHandleByIndex(
+        device_index
+    )  # index is last letter of name
+    info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+    MIN_FREE_GPU = 6 * 1024**3
+    while info.free < MIN_FREE_GPU and not args.ignore_free_gpu_check:
+        print(
+            f"{Style.BRIGHT}{Fore.YELLOW}Device {device} (index {device_index})"
+            f"has {info.free / 1024**3 :.2f} GiB left, but at least "
+            f"{MIN_FREE_GPU / 1024**3:.2f} are needed to start. "
+            f"Waiting a minute to see if it frees up... {Style.NORMAL}(You can "
+            "also try a dfferent gpu or force start by running the program "
+            f"with the --ignore-free-gpu-check flag.){Style.RESET_ALL}",
+        )
+        time.sleep(60)
+        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+    print(
+        f"Device {device} (index {device_index}) has {info.free / 1024**3 :.2f} GiB of available memory."
+    )
+
+
+args = parse_args()
+config_gpus()
 
 # DATASET CONFIGURATION
 dataset_name = args.dataset
@@ -226,52 +271,43 @@ X, Y = create_timeseries_v2(dataset)
 # MODEL CONFIGURATION
 model_name = args.model
 
-# TODO add Bi-LSTM and Attention-LSTM
+n = dataset_config[args.dataset]["nodes"]
+f = dataset_config[args.dataset]["features"]
+t = dataset_config[args.dataset]["timesteps"]
 model_config = {
     "LSTM": {
         "class": LSTM,
-        "args": [
-            dataset_config[args.dataset]["nodes"],
-            dataset_config[args.dataset]["features"],
-            dataset_config[args.dataset]["timesteps"],
-        ],
+        "args": [n, f, t],
         "kwargs": {},
     },
     "GRU": {
         "class": LSTM,
-        "args": [
-            dataset_config[args.dataset]["nodes"],
-            dataset_config[args.dataset]["features"],
-            dataset_config[args.dataset]["timesteps"],
-        ],
+        "args": [n, f, t],
         "kwargs": {"is_GRU": True},
+    },
+    "Bi-LSTM": {
+        "class": LSTM,
+        "args": [n, f, t],
+        "kwargs": {"is_bidirectional": True},
+    },
+    "Attention-LSTM": {
+        "class": LSTM,
+        "args": [n, f, t],
+        "kwargs": {"has_attention": True},
     },
     "SVD-LSTM": {
         "class": SVD_LSTM,
-        "args": [
-            dataset_config[args.dataset]["nodes"],
-            dataset_config[args.dataset]["features"],
-            dataset_config[args.dataset]["timesteps"],
-        ],
+        "args": [n, f, t],
         "kwargs": {},
     },
     "CNN-LSTM": {
         "class": CNN_LSTM,
-        "args": [
-            dataset_config[args.dataset]["nodes"],
-            dataset_config[args.dataset]["features"],
-            dataset_config[args.dataset]["timesteps"],
-        ],
+        "args": [n, f, t],
         "kwargs": {},
     },
     "GCN-LSTM": {
         "class": GCN_LSTM,
-        "args": [
-            dataset_config[args.dataset]["nodes"],
-            dataset_config[args.dataset]["features"],
-            dataset_config[args.dataset]["timesteps"],
-            adj,
-        ],
+        "args": [n, f, t, adj],
         "kwargs": {},
     },
 }
@@ -291,7 +327,12 @@ def build_model(model_name, test_date=None):
 
     model_weights_path = f"saved_models/{model_name}-{dataset_name}/{test_date}.h5"
     model(X[:1])
-    model.load_weights(model_weights_path)
+    try:
+        model.load_weights(model_weights_path)
+    except Exception as e:
+        print(
+            f"Exception while loading predictive model weights from {model_weights_path} \n{e}"
+        )
 
     print(f"[INFO] predictive model weights loaded from {model_weights_path}.")
     return model
@@ -594,9 +635,23 @@ def main():
             "dataset_name": args.dataset,
             "run_name": args.run_name,
         }
-        xai_method_specific_args = {"mm": {"run_tb": args.run_tb, "lr": args.lr}}
+        xai_method_specific_args = {
+            "mm": {
+                "run_tb": args.run_tb,
+                "lr": args.lr,
+                "use_f+": args.use_fp,
+                "top_k": args.top_k,
+            },
+            "pert": {},
+            "lime": {},
+            "rf": {},
+            "gnnex": {},
+        }
         xai_method_object = xai_methods[args.xai_method.lower()]["class"](
-            **(xai_method_common_args | xai_method_specific_args)
+            **(
+                xai_method_common_args
+                | xai_method_specific_args[args.xai_method.lower()]
+            )
         )
         xai_method_wrapper = XAIMethodWrapper(xai_method_object)
 
@@ -622,6 +677,61 @@ def main():
         all_metrics_df.to_csv(
             os.path.join(results_folder, f"{args.model}-{args.dataset}.csv")
         )
+
+        if args.plot:
+            from matplotlib.ticker import MultipleLocator
+
+            F = test_x.shape[-1]
+            rows = 2
+            cols = math.ceil(F / 2)
+            fig, ax = plt.subplots(rows, cols, figsize=(15, 5))
+            for f in range(F):
+                sns.heatmap(
+                    test_x[0, ..., f],
+                    cbar=False,
+                    square=True,
+                    cmap="bone",
+                    ax=ax[f // cols][f % cols],
+                )
+                print(mask[0, ..., f])
+                for i in range(mask[0, ..., f].shape[0]):
+                    for j in range(mask[0, ..., f].shape[1]):
+                        if mask[0, ..., f][i, j] == 1:
+                            ax[f // cols][f % cols].add_patch(
+                                plt.Rectangle(
+                                    (j, i), 1, 1, fill=False, edgecolor="cyan", lw=1
+                                )
+                            )
+
+                ax[f // cols][f % cols].set_xlabel(
+                    "Nodes", fontsize=16
+                )  # Set xlabel using ax method
+                ax[f // cols][f % cols].set_ylabel(
+                    "Timesteps", fontsize=16
+                )  # Set ylabel using ax method
+                ax[f // cols][f % cols].tick_params(
+                    axis="x", labelrotation=90, labelsize=14
+                )
+                ax[f // cols][f % cols].tick_params(
+                    axis="y", labelrotation=90, labelsize=14
+                )
+
+                ax[f // cols][f % cols].yaxis.set_major_locator(MultipleLocator(3))
+                ax[f // cols][f % cols].set_yticklabels(
+                    [i * 3 for i in range(mask.shape[1])]
+                )
+                ax[f // cols][f % cols].xaxis.set_major_locator(MultipleLocator(2))
+                ax[f // cols][f % cols].set_xticklabels(
+                    [i * 2 for i in range(mask.shape[1])]
+                )
+
+                # plt.xlabel("Nodes", fontsize=20)
+                # plt.ylabel("Timesteps", fontsize=20)
+                # plt.xticks(fontsize=20, rotation=90)
+                # plt.yticks(fontsize=20, rotation=90)
+
+                plt.tight_layout()
+                plt.savefig(f"plots/{args.run_name}-{date}.png")
 
 
 if __name__ == "__main__":
