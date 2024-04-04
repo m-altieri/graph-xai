@@ -1,13 +1,10 @@
 import os
 import sys
 import math
-import time
-import pynvml
 import argparse
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-from colorama import Fore, Style
 
 np.random.seed(42)
 import pandas as pd
@@ -17,8 +14,8 @@ import tensorflow as tf
 
 from pytftk.dicts import dict_join
 from pytftk.sequence import obs2seqs
+from pytftk.gpu_tools import use_devices, await_avail_memory
 
-# Ideally those models would be in another pip package, but for now...
 sys.path.append("../research/src")
 from models.LSTM import LSTM
 from models.SVD_LSTM import SVD_LSTM
@@ -148,25 +145,6 @@ def parse_args():
     return argparser.parse_args()
 
 
-# @DeprecationWarning
-# def create_timeseries(dataset, test_indexes):
-#     horizon = dataset_config[dataset_name]["timesteps"]
-#     X, Y = obs2seqs(dataset, horizon, horizon, horizon)
-
-#     # test_indexes = test_indexes - horizon // horizon  # l'indice è da quando parte
-#     trainX = X
-#     trainY = Y
-
-#     testX = X[test_indexes]
-#     testY = Y[test_indexes]
-
-#     # dalla Y prendo solo la label
-#     trainY = trainY[..., 0]
-#     testY = testY[..., 0]
-
-#     return (trainX, trainY, testX, testY, test_indexes)
-
-
 def create_timeseries_v2(dataset):
     horizon = dataset_config[dataset_name]["timesteps"]
     X, Y = obs2seqs(dataset, horizon, horizon, horizon)
@@ -188,36 +166,8 @@ def create_adj(adj_path=None):
 
 
 def config_gpus():
-    tf.config.set_visible_devices(
-        tf.config.list_physical_devices("GPU")[args.gpu : args.gpu + 1], "GPU"
-    )
-    assert len(tf.config.get_visible_devices("GPU")) == 1
-    device = tf.config.get_visible_devices("GPU")[0]
-    device_index = int(device.name[-1])
-
-    tf.config.experimental.set_memory_growth(device, True)
-    print(f"Using and enabling memory growth on device {device}.")
-
-    pynvml.nvmlInit()
-    handle = pynvml.nvmlDeviceGetHandleByIndex(
-        device_index
-    )  # index is last letter of name
-    info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-    MIN_FREE_GPU = 6 * 1024**3
-    while info.free < MIN_FREE_GPU and not args.ignore_free_gpu_check:
-        print(
-            f"{Style.BRIGHT}{Fore.YELLOW}Device {device} (index {device_index})"
-            f"has {info.free / 1024**3 :.2f} GiB left, but at least "
-            f"{MIN_FREE_GPU / 1024**3:.2f} are needed to start. "
-            f"Waiting a minute to see if it frees up... {Style.NORMAL}(You can "
-            "also try a dfferent gpu or force start by running the program "
-            f"with the --ignore-free-gpu-check flag.){Style.RESET_ALL}",
-        )
-        time.sleep(60)
-        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-    print(
-        f"Device {device} (index {device_index}) has {info.free / 1024**3 :.2f} GiB of available memory."
-    )
+    use_devices(args.gpu)
+    await_avail_memory(device_index=args.gpu, min_bytes=6 * 1024**3)
 
 
 args = parse_args()
@@ -264,8 +214,6 @@ pert_config = {
 # LOAD DATA
 dataset = np.load(os.path.join("data", dataset_name, dataset_name + ".npz"))["data"]
 adj = create_adj(os.path.join("data", dataset_name, f"closeness-{dataset_name}.npy"))
-# test_indexes = np.load(os.path.join("data", dataset_name, dataset_name + "_0.1.npy"))
-# trainX, trainY, testX, testY, test_indexes = create_timeseries(dataset, test_indexes)
 X, Y = create_timeseries_v2(dataset)
 
 # MODEL CONFIGURATION
@@ -339,257 +287,6 @@ def build_model(model_name, test_date=None):
 
 
 model = build_model(model_name)
-
-
-################## Train and evaluate RF
-# def evaluate_rf():
-#     rf = RandomForestRegressor()
-#     # converti testX da (T,N,F) a (T*N,F) e testY da (T,N) a (T*N,1), e fai il fit su quelli
-#     rf_trainX = np.reshape(
-#         trainX[:-1],
-#         (
-#             len(trainX[:-1])
-#             * dataset_config[dataset_name]["timesteps"]
-#             * dataset_config[dataset_name]["nodes"],
-#             dataset_config[dataset_name]["features"],
-#         ),
-#     )
-#     rf_trainY = np.reshape(
-#         trainY[:-1],
-#         (
-#             len(trainY[:-1])
-#             * dataset_config[dataset_name]["timesteps"]
-#             * dataset_config[dataset_name]["nodes"],
-#             1,
-#         ),
-#     )
-#     rf.fit(rf_trainX, rf_trainY)
-#     importances = plot_rf_feature_importance(
-#         clf_model=rf,
-#         features_testing=np.reshape(
-#             testX[-1],
-#             (
-#                 dataset_config[dataset_name]["timesteps"]
-#                 * dataset_config[dataset_name]["nodes"],
-#                 dataset_config[dataset_name]["features"],
-#             ),
-#         ),
-#         labels_testing=np.reshape(
-#             testY[-1],
-#             (
-#                 dataset_config[dataset_name]["timesteps"]
-#                 * dataset_config[dataset_name]["nodes"],
-#                 1,
-#             ),
-#         ),
-#         feature_names=[str(d) for d in range(dataset_config[dataset_name]["features"])],
-#         feature_setting="",
-#         outdir="",
-#     )
-#     print(f"RF Importances: \n{importances}")
-#     return rf, importances
-
-
-# def compute_fidelity_rf(axis, top_K, model):
-#     print(
-#         f"{'Dims':<12} {'Model F+':<10} {'Model F-':<10} {'Phenom F+':<10} {'Phenom F-':<10}"
-#     )
-#     seq_without_dims = FixedValuePerturbationStrategy().perturb(
-#         testX[-1], axis, top_K, 0.0
-#     )
-#     print("top_K:", top_K)
-#     print([d for d in range(dataset_config[dataset_name][axis]) if d not in top_K])
-#     seq_only_dims = FixedValuePerturbationStrategy().perturb(
-#         testX[-1],
-#         axis,
-#         [d for d in range(dataset_config[dataset_name][axis]) if d not in top_K],
-#         0.0,
-#     )
-#     T, N, F = seq_without_dims.shape
-#     model_fidelity_plus = fidelity_score_rf(
-#         testX[-1], seq_without_dims, from_seqs=True, model=model
-#     )
-#     model_fidelity_minus = fidelity_score_rf(
-#         testX[-1], seq_only_dims, from_seqs=True, model=model
-#     )
-#     phenomenon_fidelity_plus = fidelity_score_rf(
-#         np.reshape(
-#             np.abs(
-#                 np.reshape(testY[-1:], (1, T * N))
-#                 - model.predict(np.reshape(testX[-1:], (1 * T * N, F)))
-#             ),
-#             (1, T, N),
-#         ),
-#         np.reshape(
-#             np.abs(
-#                 np.reshape(testY[-1:], (1, T * N))
-#                 - model.predict(np.reshape(seq_without_dims, (1 * T * N, F)))
-#             ),
-#             (1, T, N),
-#         ),
-#     )
-#     phenomenon_fidelity_minus = fidelity_score_rf(
-#         np.reshape(
-#             np.abs(
-#                 np.reshape(testY[-1:], (1, T * N))
-#                 - model.predict(np.reshape(testX[-1:], (1 * T * N, F)))
-#             ),
-#             (1, T, N),
-#         ),
-#         np.reshape(
-#             np.abs(
-#                 np.reshape(testY[-1:], (1, T * N))
-#                 - model.predict(np.reshape(seq_only_dims, (1 * T * N, F)))
-#             ),
-#             (1, T, N),
-#         ),
-#     )
-#     print(
-#         f"{f'{top_K}':<12} {model_fidelity_plus:<10.3f} {model_fidelity_minus:<10.3f} {phenomenon_fidelity_plus:<10.3f} {phenomenon_fidelity_minus:<10.3f}"
-#     )
-#     return (
-#         model_fidelity_plus,
-#         model_fidelity_minus,
-#         phenomenon_fidelity_plus,
-#         phenomenon_fidelity_minus,
-#     )
-
-
-# if args.xai_method.lower() == "rf" and False:
-#     rf, importances = evaluate_rf()
-#     top_K = compute_elbow(importances)
-
-#     mfp, mfm, pfp, pfm = compute_fidelity_rf("features", top_K, model=rf)
-#     sparsity = 1 - (len(top_K) / int(dataset_config[dataset_name]["features"]))
-#     print(
-#         f"{'Model F+':<8} {'Model F-':<8} {'Phenom F+':<8} {'Phenom F-':<8} {'Sparsity':<8}"
-#     )
-#     print(f"{mfp:<8.3f} {mfm:<8.3f} {pfp:<8.3f} {pfm:<8.3f} {sparsity:<8.3f}")
-
-
-# def evaluate_lime(trainX, trainY, testX, testY):
-#     trainX = np.reshape(
-#         trainX,
-#         (
-#             len(trainX)
-#             * dataset_config[dataset_name]["timesteps"]
-#             * dataset_config[dataset_name]["nodes"],
-#             dataset_config[dataset_name]["features"],
-#         ),
-#     )
-#     trainY = np.reshape(
-#         trainY,
-#         (
-#             len(trainY)
-#             * dataset_config[dataset_name]["timesteps"]
-#             * dataset_config[dataset_name]["nodes"],
-#             1,
-#         ),
-#     )
-#     testX = np.reshape(
-#         testX,
-#         (
-#             len(testX)
-#             * dataset_config[dataset_name]["timesteps"]
-#             * dataset_config[dataset_name]["nodes"],
-#             dataset_config[dataset_name]["features"],
-#         ),
-#     )
-#     # model = sklearn.linear_model.LinearRegression()
-#     # model = sklearn.svm.SVR()
-#     model = sklearn.ensemble.GradientBoostingRegressor()
-
-#     model.fit(trainX, trainY)
-#     explainer = LimeTabularExplainer(
-#         training_data=testX[:-1],
-#         mode="regression",
-#         feature_names=[str(i) for i in range(dataset_config[dataset_name]["features"])],
-#         verbose=True,
-#     )
-#     explanation = explainer.explain_instance(testX[-1], model.predict, num_features=5)
-#     return model, explanation
-
-
-# def compute_fidelity_lime(testX, testY, ranking, model):
-#     seq_without_dims = FixedValuePerturbationStrategy().perturb(
-#         testX[-1], "features", ranking, 0.0
-#     )
-#     seq_only_dims = FixedValuePerturbationStrategy().perturb(
-#         testX[-1],
-#         "features",
-#         [
-#             d
-#             for d in range(dataset_config[dataset_name]["features"])
-#             if d not in ranking
-#         ],
-#         0.0,
-#     )
-#     T, N, F = seq_without_dims.shape
-#     model_fidelity_plus = fidelity_score_rf(
-#         testX[-1], seq_without_dims, from_seqs=True, model=model
-#     )
-#     model_fidelity_minus = fidelity_score_rf(
-#         testX[-1], seq_only_dims, from_seqs=True, model=model
-#     )
-#     phenomenon_fidelity_plus = fidelity_score_rf(
-#         np.reshape(
-#             np.abs(
-#                 np.reshape(testY[-1], (T * N))
-#                 - model.predict(np.reshape(testX[-1], (T * N, F))).flatten()
-#             ),
-#             (T, N),
-#         ),
-#         np.reshape(
-#             np.abs(
-#                 np.reshape(testY[-1], (T * N))
-#                 - model.predict(np.reshape(seq_without_dims, (T * N, F))).flatten()
-#             ),
-#             (T, N),
-#         ),
-#     )
-#     phenomenon_fidelity_minus = fidelity_score_rf(
-#         np.reshape(
-#             np.abs(
-#                 np.reshape(testY[-1], (T * N))
-#                 - model.predict(np.reshape(testX[-1], (T * N, F))).flatten()
-#             ),
-#             (1, T, N),
-#         ),
-#         np.reshape(
-#             np.abs(
-#                 np.reshape(testY[-1], (T * N))
-#                 - model.predict(np.reshape(seq_only_dims, (T * N, F))).flatten()
-#             ),
-#             (T, N),
-#         ),
-#     )
-#     return (
-#         model_fidelity_plus,
-#         model_fidelity_minus,
-#         phenomenon_fidelity_plus,
-#         phenomenon_fidelity_minus,
-#     )
-
-
-# if args.xai_method.lower() == "lime" and False:
-#     model, importances = evaluate_lime(trainX, trainY, testX, testY)
-#     importances = importances.as_list(label=0)
-#     print(f"Raw importances:\n{importances}")
-
-#     # parsing feature
-#     pieces = [d.split(" ") for d, _ in importances]
-#     ranking = [int(d[0]) if len(d) == 3 else int(d[2]) for d in pieces]
-#     # ranking = [int(d.split(" ")[0]) for d, _ in importances]
-#     print(f"Ranking: {ranking}")
-#     if args.topk:
-#         ranking = ranking[: args.topk]
-
-#     mfp, mfm, pfp, pfm = compute_fidelity_lime(testX, testY, ranking, model=model)
-#     sparsity = 1 - (len(ranking) / int(dataset_config[dataset_name]["features"]))
-#     print(
-#         f"{'Model F+':<8} {'Model F-':<8} {'Phenom F+':<8} {'Phenom F-':<8} {'Sparsity':<8}"
-#     )
-#     print(f"{mfp:<8.3f} {mfm:<8.3f} {pfp:<8.3f} {pfm:<8.3f} {sparsity:<8.3f}")
 
 
 def main():
