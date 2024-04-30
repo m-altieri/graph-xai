@@ -5,6 +5,7 @@ import argparse
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 
 np.random.seed(42)
 import pandas as pd
@@ -66,13 +67,23 @@ def parse_args():
         help="Launch the TensorBoard instance for the current TensorBoard folder.",
     )
     argparser.add_argument(
-        "--graph-execution", action="store_true", default=False, help="Run eargerly."
+        "--graph-execution", action="store_true", default=False, help="Run eagerly."
     )
     argparser.add_argument("--gpu", type=int, default=0, help="Select the gpu to use.")
     argparser.add_argument(
         "--ignore-free-gpu-check",
         action="store_true",
         help="Skip the GPU available memory check.",
+    )
+    argparser.add_argument(
+        "--save-masks",
+        action="store_true",
+        help="Save explaination masks as numpy arrays.",
+    )
+    argparser.add_argument(
+        "--plot",
+        action="store_true",
+        help="Plot explaination masks with matplotlib.",
     )
 
     # mm-only arguments
@@ -109,11 +120,6 @@ def parse_args():
         type=float,
         default=None,
         help="Set a hard choice on the sparsity value externally.",
-    )
-    argparser.add_argument(
-        "--plot",
-        action="store_true",
-        help="Plot explaination masks with matplotlib. Mainly for debugging purposes.",
     )
 
     # pert-only arguments
@@ -362,11 +368,18 @@ def main():
         # explain test instance
         mask = xai_method_wrapper.explain(test_x)
 
+        # save explanation mask
+        if args.save_masks:
+            save_mask(mask, f"masks/{args.run_name}-{date}.npy")
+
+        # plot explanation mask
+        if args.plot:
+            plot_mask(test_x, mask, f"plots/{args.run_name}-{date}.png")
+
         # evaluate extracted mask explanation
         run_metrics = xai_method_wrapper.evaluate(test_x, test_y, mask)
         run_metrics["test_date"] = date
         print(run_metrics)
-        # run_metrics = metamasker_helper.evaluate_metamasker(test, date)
 
         # add to running results and save partial results
         all_metrics = dict_join(all_metrics, run_metrics, append=True)
@@ -375,60 +388,59 @@ def main():
             os.path.join(results_folder, f"{args.model}-{args.dataset}.csv")
         )
 
-        if args.plot:
-            from matplotlib.ticker import MultipleLocator
 
-            F = test_x.shape[-1]
-            rows = 2
-            cols = math.ceil(F / 2)
-            fig, ax = plt.subplots(rows, cols, figsize=(15, 5))
-            for f in range(F):
-                sns.heatmap(
-                    test_x[0, ..., f],
-                    cbar=False,
-                    square=True,
-                    cmap="bone",
-                    ax=ax[f // cols][f % cols],
-                )
-                print(mask[0, ..., f])
-                for i in range(mask[0, ..., f].shape[0]):
-                    for j in range(mask[0, ..., f].shape[1]):
-                        if mask[0, ..., f][i, j] == 1:
-                            ax[f // cols][f % cols].add_patch(
-                                plt.Rectangle(
-                                    (j, i), 1, 1, fill=False, edgecolor="cyan", lw=1
-                                )
-                            )
+def save_mask(mask, filename):
+    if not os.path.exists(os.path.dirname(filename)):
+        os.makedirs(os.path.dirname(filename))
 
-                ax[f // cols][f % cols].set_xlabel(
-                    "Nodes", fontsize=16
-                )  # Set xlabel using ax method
-                ax[f // cols][f % cols].set_ylabel(
-                    "Timesteps", fontsize=16
-                )  # Set ylabel using ax method
-                ax[f // cols][f % cols].tick_params(
-                    axis="x", labelrotation=90, labelsize=14
-                )
-                ax[f // cols][f % cols].tick_params(
-                    axis="y", labelrotation=90, labelsize=14
-                )
+    np.save(filename, mask)
 
-                ax[f // cols][f % cols].yaxis.set_major_locator(MultipleLocator(3))
-                ax[f // cols][f % cols].set_yticklabels(
-                    [i * 3 for i in range(mask.shape[1])]
-                )
-                ax[f // cols][f % cols].xaxis.set_major_locator(MultipleLocator(2))
-                ax[f // cols][f % cols].set_xticklabels(
-                    [i * 2 for i in range(mask.shape[1])]
-                )
 
-                # plt.xlabel("Nodes", fontsize=20)
-                # plt.ylabel("Timesteps", fontsize=20)
-                # plt.xticks(fontsize=20, rotation=90)
-                # plt.yticks(fontsize=20, rotation=90)
+def plot_mask(x, mask, filename):
+    if not os.path.exists(os.path.dirname(filename)):
+        os.makedirs(os.path.dirname(filename))
 
-                plt.tight_layout()
-                plt.savefig(f"plots/{args.run_name}-{date}.png")
+    F = x.shape[-1]
+    rows = 2
+    cols = math.ceil(F / 2)
+    _, ax = plt.subplots(rows, cols, figsize=(15, 5))
+    for f in range(F):
+        sns.heatmap(
+            x[0, ..., f],
+            cbar=False,
+            square=True,
+            cmap="bone",
+            ax=ax[f // cols][f % cols],
+        )
+        print(mask[0, ..., f])
+        for i in range(mask[0, ..., f].shape[0]):
+            for j in range(mask[0, ..., f].shape[1]):
+                if mask[0, ..., f][i, j] == 1:
+                    ax[f // cols][f % cols].add_patch(
+                        plt.Rectangle((j, i), 1, 1, fill=False, edgecolor="cyan", lw=1)
+                    )
+
+        ax[f // cols][f % cols].set_xlabel(
+            "Nodes", fontsize=16
+        )  # Set xlabel using ax method
+        ax[f // cols][f % cols].set_ylabel(
+            "Timesteps", fontsize=16
+        )  # Set ylabel using ax method
+        ax[f // cols][f % cols].tick_params(axis="x", labelrotation=90, labelsize=14)
+        ax[f // cols][f % cols].tick_params(axis="y", labelrotation=90, labelsize=14)
+
+        ax[f // cols][f % cols].yaxis.set_major_locator(MultipleLocator(3))
+        ax[f // cols][f % cols].set_yticklabels([i * 3 for i in range(mask.shape[1])])
+        ax[f // cols][f % cols].xaxis.set_major_locator(MultipleLocator(2))
+        ax[f // cols][f % cols].set_xticklabels([i * 2 for i in range(mask.shape[1])])
+
+        # plt.xlabel("Nodes", fontsize=20)
+        # plt.ylabel("Timesteps", fontsize=20)
+        # plt.xticks(fontsize=20, rotation=90)
+        # plt.yticks(fontsize=20, rotation=90)
+
+        plt.tight_layout()
+        plt.savefig(filename)
 
 
 if __name__ == "__main__":
