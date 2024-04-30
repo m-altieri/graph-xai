@@ -370,11 +370,18 @@ def main():
 
         # save explanation mask
         if args.save_masks:
-            save_mask(mask, f"masks/{args.run_name}-{date}.npy")
+            save_mask(
+                mask,
+                f"masks/{args.xai_method}/{args.model}-{args.dataset}/{args.run_name}/{date}.npy",
+            )
 
         # plot explanation mask
         if args.plot:
-            plot_mask(test_x, mask, f"plots/{args.run_name}-{date}.png")
+            plot_mask(
+                test_x,
+                mask,
+                f"plots/{args.xai_method}/{args.model}-{args.dataset}/{args.run_name}/{date}.npy",
+            )
 
         # evaluate extracted mask explanation
         run_metrics = xai_method_wrapper.evaluate(test_x, test_y, mask)
