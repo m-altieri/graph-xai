@@ -1,13 +1,13 @@
 import sys
 
 sys.path.append("xai_methods/gnn_explainer")
-import torch
 import numpy as np
 from types import SimpleNamespace
 from xai_methods.gnnexplainer.explainer.explain import Explainer
+from xai_methods.adapters import GNNExplainerStaticToTemporalGraphModelAdapter
 
 
-class GNNExplainer:
+class GNNExplainerWrapper:
 
     @property
     def model(self):
@@ -24,59 +24,14 @@ class GNNExplainer:
         raise NotImplementedError()
 
     def train(self, dataset, test_set, test_date, **conf):
-        """Train the GNNExplainer model."""
+        """Train the explanation method. Not used in GNNExplainer."""
         pass
-
-    class ModelAdapter:
-        def __init__(self, model, shape):
-            self.model = model
-            self.T, self.N, self.F = shape
-
-        def __getattr__(self, name):
-            return getattr(self.model, name)
-
-        def __call__(self, *args, **kwargs):
-            """Acts as a bridge between what GNNExplainer expected the model to
-            receive and what the model actually receives.
-            Specifically:
-            - GNNExplainer want to give to the model's call method x and
-            masked_adj, while I assign masked_adj to the adj attribute and then
-            I only give x to the call method;
-            - GNNExplainer wants to give a [N,F] shaped tensor while I want to
-            give a [B,T,N,F] shaped tensor when I reshape;
-            - GNNExplainer wants to receive an [N,] shaped tensor while I
-            receive a [B,P,N] shaped tensor, so I reshape"""
-
-            # unpack inputs
-            x, masked_adj = args  # ([1,N,TF], [N,N])
-            x = x.detach().cpu().numpy()
-            masked_adj = masked_adj.detach().cpu().numpy()
-
-            # assign adj
-            self.model.adj = masked_adj
-
-            # reformat input
-            x = x.reshape((1, self.T, self.N, self.F))  # [1,T,N,F]
-
-            # call model
-            pred = self.model(x, **kwargs)
-
-            # reformat output
-            pred = np.reshape(pred, (1, self.N, self.T))
-            pred = torch.from_numpy(pred)
-            print(pred.shape)
-
-            # pack output
-            return pred, None
-
-        def eval(self):
-            pass
 
     def explain(self, historical):
         """Extract the explanation mask for the current prediction.
 
         Args:
-            historical (tf.Tensor): a [T,N,F] sequence tensor (unbatched).
+            historical (tf.Tensor): a [1,T,N,F] sequence tensor (unbatched).
 
         Returns:
             tf.Tensor: a [T,N,F] explanation mask tensor.
@@ -120,7 +75,9 @@ class GNNExplainer:
             self.pred_model.adj = np.ones((N, N))
 
         self.explainer = Explainer(
-            model=__class__.ModelAdapter(model=self.pred_model, shape=(T, N, F)),
+            model=GNNExplainerStaticToTemporalGraphModelAdapter(
+                model=self.pred_model, shape=(T, N, F)
+            ),
             adj=np.array([self.pred_model.adj]),
             feat=np.reshape(historical, (1, N, T * F)),
             label=label,

@@ -5,6 +5,7 @@ import argparse
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+from colorama import Fore, Style
 from matplotlib.ticker import MultipleLocator
 
 np.random.seed(42)
@@ -34,7 +35,11 @@ from xai_methods.perturbator.perturbation_strategies import (
 )
 from xai_methods.rffi.rffi import RFFI
 from xai_methods.lime.lime import LimeMethod
-from xai_methods.gnnexplainer.gnnexplainer import GNNExplainer
+from xai_methods.graphsvx.graphsvx import GraphSVXWrapper
+from xai_methods.graphlime.graphlime import GraphLIMEWrapper
+from xai_methods.pgexplainer.pgexplainer import PGExplainerWrapper
+from xai_methods.gnnexplainer.gnnexplainer import GNNExplainerWrapper
+
 from xai_methods.xai_method_wrapper import XAIMethodWrapper
 
 
@@ -45,13 +50,25 @@ def parse_args():
     argparser.add_argument(
         "xai_method",
         action="store",
-        choices=["mm", "pert", "rf", "lime", "gnnex"],
+        choices=[
+            "mm",
+            "pert",
+            "rf",
+            "lime",
+            "gnnexplainer",
+            "pgexplainer",
+            "graphlime",
+            "graphsvx",
+        ],
         help="Select the XAI method to use. Choices: \
             mm: Run and evaluate our gradient descent method. \
             pert: Run and evaluate our perturbation-based method. \
             rf: Run and evaluate Random Forest. \
             lime: Run and evaluate LIME. \
-            gnnex: Run and evaluate GNNExplainer. ",
+            gnnexplainer: Run and evaluate GNNExplainer. \
+            pgexplainer: Run and evaluate PGExplainer. \
+            graphlime: Run and evaluate GraphLIME. \
+            graphsvx: Run and evaluate GraphSVX.",
     )
     argparser.add_argument("model", action="store", help="Predictive model to use.")
     argparser.add_argument("dataset", action="store", help="Dataset to use.")
@@ -102,7 +119,7 @@ def parse_args():
     argparser.add_argument(
         "--epochs",
         type=int,
-        default=5,
+        default=1,
         help="Epochs of the metamodel training. Only applied if xai_method is mm.",
     )
     argparser.add_argument(
@@ -166,14 +183,14 @@ def create_adj(adj_path=None):
     adj = np.matmul(sqinv_D, np.matmul(adj, sqinv_D))
 
     if np.isnan(adj).any() or np.isinf(adj).any():
-        print(f"Adjacency matrix is nan or infinite: \n{adj}")
+        print(f"[ERROR] Adjacency matrix is nan or infinite: \n{adj}")
         sys.exit(1)
     return adj
 
 
 def config_gpus():
     use_devices(args.gpu)
-    await_avail_memory(device_index=args.gpu, min_bytes=6 * 1024**3)
+    await_avail_memory(args.gpu, min_bytes=6 * 1024**3)
 
 
 args = parse_args()
@@ -182,14 +199,22 @@ config_gpus()
 # DATASET CONFIGURATION
 dataset_name = args.dataset
 dataset_config = {
-    "beijing-multisite-airquality": {"timesteps": 6, "nodes": 12, "features": 11},
+    "beijing-multisite-airquality": {
+        "timesteps": 6,
+        "nodes": 12,
+        "features": 11,
+    },
     "lightsource": {
         "timesteps": 19,
         "nodes": 7,
         "features": 11,
         "test_dates": 36,
     },
-    "pems-sf-weather": {"timesteps": 6, "nodes": 163, "features": 16},
+    "pems-sf-weather": {
+        "timesteps": 6,
+        "nodes": 163,
+        "features": 16,
+    },
     "pv-italy": {
         "timesteps": 19,
         "nodes": 17,
@@ -203,6 +228,7 @@ dataset_config = {
         "test_dates": 73,
     },
 }
+
 pert_config = {
     "PlusMinusSigma": {
         "class": PlusMinusSigmaPerturbationStrategy,
@@ -212,8 +238,12 @@ pert_config = {
         "class": NormalPerturbationStrategy,
         "kwargs": {"type": "absolute"},
     },
-    "Percentile": {"class": PercentilePerturbationStrategy},
-    "FixedValue": {"class": FixedValuePerturbationStrategy},
+    "Percentile": {
+        "class": PercentilePerturbationStrategy,
+    },
+    "FixedValue": {
+        "class": FixedValuePerturbationStrategy,
+    },
 }
 
 
@@ -285,10 +315,14 @@ def build_model(model_name, test_date=None):
         model.load_weights(model_weights_path)
     except Exception as e:
         print(
-            f"Exception while loading predictive model weights from {model_weights_path} \n{e}"
+            f"[ERROR] Exception while loading predictive model weights from "
+            + f"{Fore.CYAN}{model_weights_path}{Fore.RESET}\n{e}"
         )
 
-    print(f"[INFO] predictive model weights loaded from {model_weights_path}.")
+    print(
+        f"[INFO] predictive model weights loaded from "
+        + f"{Fore.CYAN}{model_weights_path}{Fore.RESET}."
+    )
     return model
 
 
@@ -297,11 +331,25 @@ model = build_model(model_name)
 
 def main():
     xai_methods = {
-        "mm": {"class": MetaMaskerHelper},
-        "pert": {"class": PerturbatorMethod},
-        "lime": {"class": LimeMethod},
-        "rf": {"class": RFFI},
-        "gnnex": {"class": GNNExplainer},
+        "mm": {
+            "class": MetaMaskerHelper,
+            "specific_kwargs": {
+                "run_tb": args.run_tb,
+                "lr": args.lr,
+                "use_f+": args.use_fp,
+                "top_k": args.top_k,
+            },
+        },
+        "pert": {"class": PerturbatorMethod, "specific_kwargs": {}},
+        "lime": {"class": LimeMethod, "specific_kwargs": {}},
+        "rf": {"class": RFFI, "specific_kwargs": {}},
+        "gnnexplainer": {"class": GNNExplainerWrapper, "specific_kwargs": {}},
+        "pgexplainer": {
+            "class": PGExplainerWrapper,
+            "specific_kwargs": {"adj": adj, "top_k": args.top_k},
+        },
+        "graphlime": {"class": GraphLIMEWrapper, "specific_kwargs": {}},
+        "graphsvx": {"class": GraphSVXWrapper, "specific_kwargs": {}},
     }
 
     # Create results folder
@@ -338,22 +386,10 @@ def main():
             "dataset_name": args.dataset,
             "run_name": args.run_name,
         }
-        xai_method_specific_args = {
-            "mm": {
-                "run_tb": args.run_tb,
-                "lr": args.lr,
-                "use_f+": args.use_fp,
-                "top_k": args.top_k,
-            },
-            "pert": {},
-            "lime": {},
-            "rf": {},
-            "gnnex": {},
-        }
         xai_method_object = xai_methods[args.xai_method.lower()]["class"](
             **(
                 xai_method_common_args
-                | xai_method_specific_args[args.xai_method.lower()]
+                | xai_methods[args.xai_method.lower()]["specific_kwargs"]
             )
         )
         xai_method_wrapper = XAIMethodWrapper(xai_method_object)

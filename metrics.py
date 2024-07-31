@@ -275,6 +275,8 @@ class Sparsity(Metric):
         pred_on_nonrelevant,
         **kwargs,
     ):
-        sparsity_fn = lambda x: 1.0 - tf.reduce_sum(x) / tf.cast(tf.size(x), tf.float32)
+        sparsity_fn = lambda x: 1.0 - tf.cast(tf.reduce_sum(x), tf.float32) / tf.cast(
+            tf.size(x), tf.float32
+        )
         self.total.assign_add(sparsity_fn(relevant_mask))
         self.count.assign_add(1.0)
