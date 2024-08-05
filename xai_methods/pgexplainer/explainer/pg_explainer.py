@@ -131,7 +131,7 @@ class PGExplainer(ExplainerAlgorithm):
                 )
 
         z = model.get_embeddings(x, edge_index, **kwargs)[-1]
-        # z = torch.tensor(z)
+        z = torch.tensor(z)
 
         self.optimizer.zero_grad()
         temperature = self._get_temperature(epoch)
@@ -226,6 +226,7 @@ class PGExplainer(ExplainerAlgorithm):
             )
 
         z = model.get_embeddings(x, edge_index, **kwargs)[-1]
+        z = torch.tensor(z)
 
         inputs = self._get_inputs(z, edge_index, index)
         logits = self.mlp(inputs).view(-1)
@@ -269,7 +270,7 @@ class PGExplainer(ExplainerAlgorithm):
     def _get_inputs(
         self, embedding: Tensor, edge_index: Tensor, index: Optional[int] = None
     ) -> Tensor:
-
+        embedding = embedding.transpose(0, 1)
         zs = [
             torch.tensor(embedding[edge_index[0]]),
             torch.tensor(embedding[edge_index[1]]),

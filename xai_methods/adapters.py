@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-import tensorflow as tf
 
 
 class StaticToTemporalGraphModelAdapter:
@@ -8,8 +7,12 @@ class StaticToTemporalGraphModelAdapter:
     model to receive/output and what the model actually receives/outputs.
     """
 
-    def __init__(self, model, shape):
+    def __init__(self, model, shape=None):
         self.model = model
+        if shape:
+            self.T, self.N, self.F = shape
+
+    def set_shape(self, shape):
         self.T, self.N, self.F = shape
 
     def __getattr__(self, name):
@@ -100,3 +103,14 @@ class PGExplainerStaticToTemporalGraphModelAdapter(StaticToTemporalGraphModelAda
 
     def get_embeddings(model, x, edge_index, **kwargs):
         return model(x, edge_index, **kwargs)
+
+
+class GraphLimeStaticToTemporalGraphModelAdapter(StaticToTemporalGraphModelAdapter):
+    def __init__(self, model):
+        super().__init__(model)
+
+    def __call__(self, *args, **kwargs):
+        pred = super().__call__(kwargs["x"])
+        pred = pred.numpy()
+        pred = torch.tensor(pred)
+        return pred

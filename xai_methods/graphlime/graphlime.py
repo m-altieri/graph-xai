@@ -5,7 +5,10 @@ Papers:
 [IEEE Tran on Knowledge and Data Engineering] GraphLIME: Local Interpretable Model Explanations for Graph Neural Networks (https://arxiv.org/abs/2001.06216)
 """
 
+import torch
+import numpy as np
 from graphlime import GraphLIME
+from xai_methods.adapters import GraphLimeStaticToTemporalGraphModelAdapter
 
 
 class GraphLIMEWrapper:
@@ -15,7 +18,7 @@ class GraphLIMEWrapper:
         return self.pred_model
 
     def __init__(self, pred_model, pred_model_name, dataset_name, run_name, **conf):
-        self.pred_model = pred_model
+        self.pred_model = GraphLimeStaticToTemporalGraphModelAdapter(pred_model)
         self.pred_model_name = pred_model_name
         self.dataset_name = dataset_name
         self.run_name = run_name
@@ -36,6 +39,14 @@ class GraphLIMEWrapper:
         Returns:
             tf.Tensor: a [T,N,F] explanation mask tensor.
         """
-        t, n, f = historical.shape
-        for node_idx in range(n):
-            coefs = self.explainer.explain_node(node_idx)
+        historical = np.squeeze(historical, axis=0)
+        T, N, F = historical.shape
+        self.pred_model.set_shape((T, N, F))
+        # edge_index = np.array(range(N * N))
+        edge_index = torch.arange(N * N)
+
+        coefs = []
+        for node_idx in range(N):
+            coefs.append(self.explainer.explain_node(node_idx, historical, edge_index))
+
+        print(f"Coefs: {coefs}")

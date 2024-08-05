@@ -100,7 +100,7 @@ class PGExplainerWrapper:
                         target=y,
                         index=index,
                     )
-                    print(loss)
+                    # print(loss)
 
     def explain(self, historical):
         """Extract the explanation mask for the current prediction.
