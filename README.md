@@ -5,7 +5,7 @@
 
 This repository contains the code necessary to replicate the experiments and results presented in the paper _"An End-to-end Explainability Framework for Spatio-Temporal Predictive Modeling"_.
 
-![gif](https://s2.ezgif.com/tmp/ezgif-2-ce4af01ee1.gif)
+![gif](https://i.imgur.com/ICCanWb.gif)
 
 # Requirements
 
