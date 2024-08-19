@@ -78,7 +78,7 @@ All explanation methods are run through a shared interface.
 The generic command to run the explanation process is:
 `python3 explainer.py <xai_method> <pred_model> <dataset>`, where:
 
-- `<xai_method>` is one of `{mm,pert,rf,lime,gnnexplainer,pgexplainer,graphlime}`,
+- `<xai_method>` is one of `{mm,pert,rf,lime,gnnexplainer,pgexplainer,graphlime}` (here, `mm` refers to the proposed method),
 - `<pred_model>` is one of `{LSTM,GRU,Bi-LSTM,Attention-LSTM,SVD-LSTM,CNN-LSTM,GCN-LSTM}`,
 - `<dataset>` is one of `{beijing-multisite-airquality,lightsource,pems-sf-weather,pv-italy,wind-nrel}`.
 
