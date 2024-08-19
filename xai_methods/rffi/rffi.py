@@ -1,5 +1,9 @@
+import os
+import time
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
+
+from pytftk.logbooks import Logbook
 
 
 dataset_config = {
@@ -44,6 +48,8 @@ class RFFI:
 
         self.topk = conf.get("topk", 5)
 
+        self.logbook = Logbook()
+
     def load_weights(self, test_date, test_instance):
         raise NotImplementedError()
 
@@ -52,6 +58,7 @@ class RFFI:
         dataset = np.array([el for el in dataset])
         x = dataset[:, 0]
         y = dataset[:, 1][..., 0]
+        n_train_instances = len(x)
 
         # convert testX from (T,N,F) to (TN,F) and testY from (T,N) to (TN,), and fit on those
         rf_trainX = np.reshape(
@@ -71,7 +78,13 @@ class RFFI:
                 * dataset_config[self.dataset_name]["nodes"],
             ),
         )
+
+        start_time = time.time()
+
         self.rf.fit(rf_trainX, rf_trainY)
+
+        self.logbook.register("Total training time", time.time() - start_time)
+        self.logbook.register("Train instances", n_train_instances)
 
     def explain(self, historical):
         """Extract the explanation mask for the current prediction.
@@ -90,3 +103,21 @@ class RFFI:
         explanation_mask[..., best_features] = 1
 
         return explanation_mask.astype(np.float32)
+
+    def save_metrics(self):
+        path = os.path.join(
+            "extra_metrics",
+            "rffi",
+            self.pred_model_name,
+            self.dataset_name,
+            self.run_name,
+        )
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        self.logbook.save_plot(
+            path,
+            names=["Total training time", "Train instances"],
+            pad_left=0.3,
+            pad_bottom=0.3,
+        )

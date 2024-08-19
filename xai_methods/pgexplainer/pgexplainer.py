@@ -9,9 +9,13 @@ Papers:
 - [TPAMI 2024] Towards Inductive and Efficient Explanations for Graph Neural Networks (https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=10423141)
 """
 
+import os
+import time
 import numpy as np
 from tqdm import tqdm
 from torch_geometric.explain import Explainer, ModelConfig
+
+from pytftk.logbooks import Logbook
 
 from xai_methods.pgexplainer.explainer.pg_explainer import PGExplainer
 from xai_methods.adapters import PGExplainerStaticToTemporalGraphModelAdapter
@@ -61,6 +65,8 @@ class PGExplainerWrapper:
         self.run_name = run_name
         self.conf = conf
 
+        self.logbook = Logbook()
+
     @property
     def model(self):
         return self.pred_model
@@ -88,6 +94,7 @@ class PGExplainerWrapper:
 
         for epoch in range(conf["epochs"]):
             for x, y in tqdm(dataset):
+                start_time = time.time()
                 x = np.array(x)
                 y = np.array(y)
                 x = (x, self.conf.get("adj"))
@@ -101,6 +108,7 @@ class PGExplainerWrapper:
                         index=index,
                     )
                     # print(loss)
+                self.logbook.register("Train step time", time.time() - start_time)
 
     def explain(self, historical):
         """Extract the explanation mask for the current prediction.
@@ -111,6 +119,8 @@ class PGExplainerWrapper:
         Returns:
             tf.Tensor: a [T,N,F] explanation mask tensor.
         """
+        start_time = time.time()
+
         _, T, N, F = historical.shape
 
         edge_index = np.array(range(N * N))
@@ -146,4 +156,24 @@ class PGExplainerWrapper:
         explanation_mask = np.zeros((T, N, F))  # [T,N,F] of all zeros
         explanation_mask[:, top_k_indexes] = 1  # set top nodes to 1
 
+        self.logbook.register("Explanation time", time.time() - start_time)
+
         return explanation_mask
+
+    def save_metrics(self):
+        path = os.path.join(
+            "extra_metrics",
+            "pgexplainer",
+            self.pred_model_name,
+            self.dataset_name,
+            self.run_name,
+        )
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        self.logbook.save_plot(
+            path,
+            names=["Train step time", "Explanation time"],
+            pad_left=0.3,
+            pad_bottom=0.3,
+        )

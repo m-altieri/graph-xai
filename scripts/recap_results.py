@@ -5,7 +5,7 @@ import pandas as pd
 
 
 argparser = argparse.ArgumentParser()
-argparser.add_argument("-r", "--run-name")
+argparser.add_argument("run_name", help="Name of the run to recap the results of.")
 
 args = argparser.parse_args()
 

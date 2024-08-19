@@ -1,9 +1,12 @@
+import os
+import time
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
 from pytftk.arrays import set_value
+from pytftk.logbooks import Logbook
 from xai_methods.perturbator.perturbation_strategies import (
     NormalPerturbationStrategy,
     PercentilePerturbationStrategy,
@@ -250,6 +253,8 @@ class PerturbatorMethod:
         self.topk = conf.get("topk", None)
         self.plot = conf.get("plot", False)
 
+        self.logbook = Logbook()
+
     def load_weights(self, test_date, x):
         print(f"[INFO] {__class__.__name__} has no weights to load.")
 
@@ -265,6 +270,8 @@ class PerturbatorMethod:
         Returns:
             tf.Tensor: a [T,N,F] explanation mask tensor.
         """
+        start_time = time.time()
+
         top_Ks = []
         results = []
         previous_perturbed = np.squeeze(historical, axis=0)
@@ -300,4 +307,24 @@ class PerturbatorMethod:
 
             explanation_mask = np.where(mask, explanation_mask, np.zeros_like(mask))
 
+        self.logbook.register("Explanation time", time.time() - start_time)
+
         return explanation_mask.astype(np.float32)
+
+    def save_metrics(self):
+        path = os.path.join(
+            "extra_metrics",
+            "perturbator",
+            self.pred_model_name,
+            self.dataset_name,
+            self.run_name,
+        )
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        self.logbook.save_plot(
+            path,
+            names=["Explanation time"],
+            pad_left=0.3,
+            pad_bottom=0.3,
+        )

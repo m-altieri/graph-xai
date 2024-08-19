@@ -1,4 +1,3 @@
-import numpy as np
 import tensorflow as tf
 from metrics import (
     ModelFidelityPlus,
@@ -14,9 +13,9 @@ from metrics import (
 
 
 class XAIMethodWrapper:
-    """Classe wrapper di lancio per i vari metodi di XAI per generare i risultati.
-    Non fa niente di più rispetto a ciò che si può fare lanciando i vari metodi singolarmente e
-    estraendo manualmente i risultati.
+    """Wrapper class to launch XAI methods to generate the results.
+    It does nothing more than what can be done manually by running the various
+    methods individually and manually extracting the results.
     """
 
     def __init__(self, method):
@@ -51,6 +50,14 @@ class XAIMethodWrapper:
             tf.Tensor: a [T,N,F] explanation mask tensor.
         """
         return self.method.explain(historical)
+
+    def save_metrics(self):
+        """'Save metrics' in the broad sense of the term. This may include
+        plots, csv files, metadata, and any sorts of file. It just provides to
+        the XAI method a chance to write some information on file.
+        There are no assumptions about what information each XAI method writes,
+        if any at all."""
+        self.method.save_metrics()
 
     def evaluate(self, historical, phenomenon, mask):
         """Compute metrics for the current explanation mask and prediction.

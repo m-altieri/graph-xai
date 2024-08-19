@@ -227,10 +227,8 @@ class PGExplainer(ExplainerAlgorithm):
 
         z = model.get_embeddings(x, edge_index, **kwargs)[-1]
         z = torch.tensor(z)
-
         inputs = self._get_inputs(z, edge_index, index)
         logits = self.mlp(inputs).view(-1)
-
         edge_mask = self._post_process_mask(logits, hard_edge_mask, apply_sigmoid=True)
 
         return Explanation(edge_mask=edge_mask)

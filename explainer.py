@@ -18,7 +18,6 @@ from pytftk.dicts import dict_join
 from pytftk.sequence import obs2seqs
 from pytftk.gpu_tools import use_devices, await_avail_memory
 
-sys.path.append("../research/src")
 from models.LSTM import LSTM
 from models.SVD_LSTM import SVD_LSTM
 from models.CNN_LSTM import CNN_LSTM
@@ -35,7 +34,6 @@ from xai_methods.perturbator.perturbation_strategies import (
 )
 from xai_methods.rffi.rffi import RFFI
 from xai_methods.lime.lime import LimeMethod
-from xai_methods.graphsvx.graphsvx import GraphSVXWrapper
 from xai_methods.graphlime.graphlime import GraphLIMEWrapper
 from xai_methods.pgexplainer.pgexplainer import PGExplainerWrapper
 from xai_methods.gnnexplainer.gnnexplainer import GNNExplainerWrapper
@@ -58,7 +56,6 @@ def parse_args():
             "gnnexplainer",
             "pgexplainer",
             "graphlime",
-            "graphsvx",
         ],
         help="Select the XAI method to use. Choices: \
             mm: Run and evaluate our gradient descent method. \
@@ -67,8 +64,7 @@ def parse_args():
             lime: Run and evaluate LIME. \
             gnnexplainer: Run and evaluate GNNExplainer. \
             pgexplainer: Run and evaluate PGExplainer. \
-            graphlime: Run and evaluate GraphLIME. \
-            graphsvx: Run and evaluate GraphSVX.",
+            graphlime: Run and evaluate GraphLIME.",
     )
     argparser.add_argument("model", action="store", help="Predictive model to use.")
     argparser.add_argument("dataset", action="store", help="Dataset to use.")
@@ -101,6 +97,17 @@ def parse_args():
         "--plot",
         action="store_true",
         help="Plot explaination masks with matplotlib.",
+    )
+    argparser.add_argument(
+        "--save-metrics",
+        action="store_true",
+        help="Save metrics to file. This includes plots of training stability "
+        + "and csv files with information such as training and inference time.",
+    )
+    argparser.add_argument(
+        "--last-test-date-only",
+        action="store_true",
+        help="Whether to only use the last test date.",
     )
 
     # mm-only arguments
@@ -168,7 +175,7 @@ def parse_args():
     return argparser.parse_args()
 
 
-def create_timeseries_v2(dataset):
+def create_timeseries(dataset):
     horizon = dataset_config[dataset_name]["timesteps"]
     X, Y = obs2seqs(dataset, horizon, horizon, horizon)
     return X, Y
@@ -179,11 +186,15 @@ def create_adj(adj_path=None):
     D = np.zeros_like(adj)
     for row in range(len(D)):
         D[row, row] = np.sum(adj[row])  # Degree matrix (D_ii = sum(adj[i,:]))
-    sqinv_D = np.sqrt(np.linalg.inv(D))  # Calcola l'inversa e la splitta in due radici
+    sqinv_D = np.sqrt(
+        np.linalg.inv(D)
+    )  # Compute the inverse and split it into two roots
     adj = np.matmul(sqinv_D, np.matmul(adj, sqinv_D))
 
     if np.isnan(adj).any() or np.isinf(adj).any():
-        print(f"[ERROR] Adjacency matrix is nan or infinite: \n{adj}")
+        print(
+            f"{Fore.RED}[ERROR] Adjacency matrix is nan or infinite:\n{adj}{Fore.RESET}"
+        )
         sys.exit(1)
     return adj
 
@@ -250,7 +261,7 @@ pert_config = {
 # LOAD DATA
 dataset = np.load(os.path.join("data", dataset_name, dataset_name + ".npz"))["data"]
 adj = create_adj(os.path.join("data", dataset_name, f"closeness-{dataset_name}.npy"))
-X, Y = create_timeseries_v2(dataset)
+X, Y = create_timeseries(dataset)
 
 # MODEL CONFIGURATION
 model_name = args.model
@@ -315,13 +326,13 @@ def build_model(model_name, test_date=None):
         model.load_weights(model_weights_path)
     except Exception as e:
         print(
-            f"[ERROR] Exception while loading predictive model weights from "
-            + f"{Fore.CYAN}{model_weights_path}{Fore.RESET}\n{e}"
+            f"{Fore.RED}[ERROR] Exception while loading predictive model weights "
+            + f"from {Style.BRIGHT}{model_weights_path}{Style.NORMAL}:\n{e}{Fore.RESET}"
         )
 
     print(
-        f"[INFO] predictive model weights loaded from "
-        + f"{Fore.CYAN}{model_weights_path}{Fore.RESET}."
+        f"{Fore.CYAN}[INFO] predictive model weights loaded from "
+        + f"{Style.BRIGHT}{model_weights_path}{Style.NORMAL}.{Fore.RESET}"
     )
     return model
 
@@ -349,7 +360,6 @@ def main():
             "specific_kwargs": {"adj": adj, "top_k": args.top_k},
         },
         "graphlime": {"class": GraphLIMEWrapper, "specific_kwargs": {}},
-        "graphsvx": {"class": GraphSVXWrapper, "specific_kwargs": {}},
     }
 
     # Create results folder
@@ -359,6 +369,8 @@ def main():
 
     # Load test dates
     test_dates = np.load(f"data/{args.dataset}/test_dates/{args.dataset}-10-m0.5.npy")
+    if args.last_test_date_only:
+        test_dates = test_dates[-1:]
 
     all_metrics = {}
     for date in test_dates:  # each date acts as an evaluation fold (or run)
@@ -408,7 +420,7 @@ def main():
         if args.save_masks:
             save_mask(
                 mask,
-                f"masks/{args.xai_method}/{args.model}-{args.dataset}/{args.run_name}/{date}.npy",
+                f"masks/{args.xai_method}/{args.model}/{args.dataset}/{args.run_name}/{date}.npy",
             )
 
         # plot explanation mask
@@ -416,8 +428,10 @@ def main():
             plot_mask(
                 test_x,
                 mask,
-                f"plots/{args.xai_method}/{args.model}-{args.dataset}/{args.run_name}/{date}.npy",
+                f"plots/{args.xai_method}/{args.model}/{args.dataset}/{args.run_name}/{date}.pdf",
             )
+        if args.save_metrics:
+            xai_method_wrapper.save_metrics()
 
         # evaluate extracted mask explanation
         run_metrics = xai_method_wrapper.evaluate(test_x, test_y, mask)
@@ -455,7 +469,6 @@ def plot_mask(x, mask, filename):
             cmap="bone",
             ax=ax[f // cols][f % cols],
         )
-        print(mask[0, ..., f])
         for i in range(mask[0, ..., f].shape[0]):
             for j in range(mask[0, ..., f].shape[1]):
                 if mask[0, ..., f][i, j] == 1:
@@ -463,12 +476,8 @@ def plot_mask(x, mask, filename):
                         plt.Rectangle((j, i), 1, 1, fill=False, edgecolor="cyan", lw=1)
                     )
 
-        ax[f // cols][f % cols].set_xlabel(
-            "Nodes", fontsize=16
-        )  # Set xlabel using ax method
-        ax[f // cols][f % cols].set_ylabel(
-            "Timesteps", fontsize=16
-        )  # Set ylabel using ax method
+        ax[f // cols][f % cols].set_xlabel("Nodes", fontsize=16)
+        ax[f // cols][f % cols].set_ylabel("Timesteps", fontsize=16)
         ax[f // cols][f % cols].tick_params(axis="x", labelrotation=90, labelsize=14)
         ax[f // cols][f % cols].tick_params(axis="y", labelrotation=90, labelsize=14)
 
@@ -476,11 +485,6 @@ def plot_mask(x, mask, filename):
         ax[f // cols][f % cols].set_yticklabels([i * 3 for i in range(mask.shape[1])])
         ax[f // cols][f % cols].xaxis.set_major_locator(MultipleLocator(2))
         ax[f // cols][f % cols].set_xticklabels([i * 2 for i in range(mask.shape[1])])
-
-        # plt.xlabel("Nodes", fontsize=20)
-        # plt.ylabel("Timesteps", fontsize=20)
-        # plt.xticks(fontsize=20, rotation=90)
-        # plt.yticks(fontsize=20, rotation=90)
 
         plt.tight_layout()
         plt.savefig(filename)

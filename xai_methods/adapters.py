@@ -59,7 +59,7 @@ class StaticToTemporalGraphModelAdapter:
 
 class GNNExplainerStaticToTemporalGraphModelAdapter(StaticToTemporalGraphModelAdapter):
     """
-    - GNNExplainers want to pass `x` and `masked_adj` to the model's `call` method,
+    - GNNExplainer wants to pass `x` and `masked_adj` to the model's `call` method,
     while i assign `masked_adj` to the adj attribute and then i only give `x`
     to the call method;
     - GNNExplainer wants to pass an [N,F] shaped tensor while i want to
@@ -109,8 +109,15 @@ class GraphLimeStaticToTemporalGraphModelAdapter(StaticToTemporalGraphModelAdapt
     def __init__(self, model):
         super().__init__(model)
 
-    def __call__(self, *args, **kwargs):
-        pred = super().__call__(kwargs["x"])
-        pred = pred.numpy()
-        pred = torch.tensor(pred)
-        return pred
+    def __call__(self, x, edge_index=None):
+        pred = super().__call__(x)
+        pred = np.squeeze(pred, axis=0)
+
+        per_node_pred_avg = np.mean(pred, axis=0)  # [N]
+        proba = torch.Tensor(per_node_pred_avg)  # [N]
+        proba = torch.unsqueeze(proba, dim=-1)  # [N,1]
+        proba = torch.cat((proba, 1 - proba), dim=-1)  # [N,2]
+        return proba
+
+    def modules(self):
+        return []

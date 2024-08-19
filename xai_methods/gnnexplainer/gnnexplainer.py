@@ -1,10 +1,14 @@
+import os
 import sys
-
-sys.path.append("xai_methods/gnn_explainer")
+import time
 import numpy as np
 from types import SimpleNamespace
 from xai_methods.gnnexplainer.explainer.explain import Explainer
 from xai_methods.adapters import GNNExplainerStaticToTemporalGraphModelAdapter
+
+from pytftk.logbooks import Logbook
+
+sys.path.append("xai_methods/gnn_explainer")
 
 
 class GNNExplainerWrapper:
@@ -19,6 +23,8 @@ class GNNExplainerWrapper:
         self.dataset_name = dataset_name
         self.run_name = run_name
         self.conf = conf
+
+        self.logbook = Logbook()
 
     def load_weights(self, test_date, test_instance):
         raise NotImplementedError()
@@ -74,6 +80,8 @@ class GNNExplainerWrapper:
         if self.pred_model.adj is None:
             self.pred_model.adj = np.ones((N, N))
 
+        start_time = time.time()
+
         self.explainer = Explainer(
             model=GNNExplainerStaticToTemporalGraphModelAdapter(
                 model=self.pred_model, shape=(T, N, F)
@@ -91,6 +99,8 @@ class GNNExplainerWrapper:
         )  # [N,N]
         node_hubness = np.sum(explanation, axis=(1, 2))  # sum connections to each node
 
+        self.logbook.register("Explanation time", time.time() - start_time)
+
         # take nodes with a "hubness" of more than mean + sigma
         sigma = np.std(node_hubness)
         best_nodes = [
@@ -101,4 +111,23 @@ class GNNExplainerWrapper:
 
         explanation_mask = np.zeros_like(historical)
         explanation_mask[:, best_nodes, :] = 1
+
         return explanation_mask.astype(np.float32)
+
+    def save_metrics(self):
+        path = os.path.join(
+            "extra_metrics",
+            "gnnexplainer",
+            self.pred_model_name,
+            self.dataset_name,
+            self.run_name,
+        )
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        self.logbook.save_plot(
+            path,
+            names=["Explanation time"],
+            pad_left=0.3,
+            pad_bottom=0.3,
+        )

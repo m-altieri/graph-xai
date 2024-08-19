@@ -1,9 +1,10 @@
 import os
+import time
 import numpy as np
 from tqdm import tqdm
 import tensorflow as tf
 
-from pytftk.logbooks import TBManager
+from pytftk.logbooks import TBManager, Logbook
 from xai_methods.metamasker.xai_losses import SparsityAwareModelFidelityLoss
 
 
@@ -15,6 +16,7 @@ class MetaMaskerHelper:
         self.dataset_name = dataset_name
         self.run_name = run_name
         self.run_tb = conf.get("run_tb")
+
         self.metamasker = MetaMasker(
             pred_model,
             run_name=self.run_name,
@@ -56,7 +58,6 @@ class MetaMaskerHelper:
 
         train_steps_per_epoch = None
         for epoch in range(epochs):
-
             # Train metamasker
             step = 0
             total_loss = 0.0
@@ -93,6 +94,51 @@ class MetaMaskerHelper:
     def model(self):
         return self.metamasker.pred_model
 
+    def save_metrics(self):
+        path = os.path.join(
+            "extra_metrics",
+            "mm",
+            self.pred_model_name,
+            self.dataset_name,
+            self.run_name,
+        )
+        if not os.path.exists(path):
+            os.makedirs(path)
+        self._plot_train_stability(path)
+        self._save_train_inference_times(path)
+
+    def _plot_train_stability(self, path):
+        self.metamasker.metrics_logbook.save_plot(
+            path,
+            title=f"{self.pred_model_name} - {self._pretty_dataset_name}",
+            names=["Train loss"],
+            color="b",
+            linewidth=2,
+            alpha=1,
+            ylabel="Train Loss",
+            pad_left=0.25,
+            pad_bottom=0.3,
+        )
+
+    def _save_train_inference_times(self, path):
+        self.metamasker.metrics_logbook.save_plot(
+            path,
+            names=["Train step time", "Test step time"],
+            pad_left=0.3,
+            pad_bottom=0.3,
+        )
+
+    @property
+    def _pretty_dataset_name(self):
+        """NOTE: it will break when new datasets are added or some dataset name changes."""
+        return {
+            "beijing-multisite-airquality": "Beijing Multisite Airquality",
+            "lightsource": "Lightsource",
+            "pems-sf-weather": "PEMS SF Weather",
+            "pv-italy": "PV Italy",
+            "wind-nrel": "Wind NREL",
+        }[self.dataset_name]
+
 
 class MetaMasker(tf.keras.Model):
 
@@ -121,6 +167,7 @@ class MetaMasker(tf.keras.Model):
         )
         if run_tb:
             self.tb_manager.run()
+        self.metrics_logbook = Logbook()
 
         self.pred_model = model
         self.pred_model.trainable = False
@@ -260,6 +307,7 @@ class MetaMasker(tf.keras.Model):
         return pred_on_masked, mask
 
     def train_step(self, inputs):
+        start_time = time.time()
 
         with tf.GradientTape() as tape:
             pred_on_masked, mask = self(inputs)
@@ -280,14 +328,19 @@ class MetaMasker(tf.keras.Model):
             self.loss.set_mask(mask)
             loss = self.loss(pred_on_original, pred_on_masked)
             self.tb_manager.scalar("train_loss", loss)
+        self.metrics_logbook.register("Train loss", loss)
 
         gradients = tape.gradient(loss, self.trainable_weights)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_weights))
         self.compiled_metrics.update_state(pred_on_original, pred_on_masked)
 
+        self.metrics_logbook.register("Train step time", time.time() - start_time)
+
         return loss
 
     def test_step(self, inputs):
+        start_time = time.time()
+
         pred_on_masked, mask = self(inputs)
         pred_on_original = self.pred_model(inputs)
         self.tb_manager.image("pred-on-original", pred_on_original)
@@ -295,6 +348,9 @@ class MetaMasker(tf.keras.Model):
         self.loss.set_mask(mask)
         loss = self.loss(pred_on_original, pred_on_masked)
         self.tb_manager.scalar("test_loss", loss)
+        self.metrics_logbook.register("Test loss", loss)
+
+        self.metrics_logbook.register("Test step time", time.time() - start_time)
 
         return loss
 

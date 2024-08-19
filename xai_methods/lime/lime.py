@@ -1,5 +1,9 @@
+import os
+import time
 import numpy as np
 from lime.lime_tabular import LimeTabularExplainer
+
+from pytftk.logbooks import Logbook
 
 
 class Tabular2STInterface:
@@ -45,6 +49,8 @@ class LimeMethod:
 
         self.topk = conf.get("topk", 5)
 
+        self.logbook = Logbook()
+
     def load_weights(self, test_date, test_instance):
         raise NotImplementedError()
 
@@ -79,9 +85,12 @@ class LimeMethod:
         training_data = np.tile(training_data, (1000, 1))
 
         top_k = int(training_data.shape[-1] * 0.2)  # 0.01 = take top 1%
+
+        start_time = time.time()
         lime_explanation = self.explainer.explain_instance(
             historical, tabular2st_interface.tabular2st_predict, num_features=top_k
         )
+        self.logbook.register("Explanation time", time.time() - start_time)
 
         best_features = np.array(lime_explanation.as_map()[0], dtype=np.int16)[:, 0]
         historical = tabular2st_interface.tabular2st(historical)
@@ -91,3 +100,21 @@ class LimeMethod:
         explanation_mask[unraveled_best_features] = 1
 
         return explanation_mask.astype(np.float32)
+
+    def save_metrics(self):
+        path = os.path.join(
+            "extra_metrics",
+            "lime",
+            self.pred_model_name,
+            self.dataset_name,
+            self.run_name,
+        )
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        self.logbook.save_plot(
+            path,
+            names=["Explanation time"],
+            pad_left=0.3,
+            pad_bottom=0.3,
+        )
