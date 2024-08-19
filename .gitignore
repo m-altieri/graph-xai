@@ -4,6 +4,8 @@
 **/*.npz
 **/*.pdf
 **/*.png
+!scripts/time_complexity_plots/*
+!extra_metrics/**/**/**/revision-stability/Train\ loss.*
 **/*.pyc
 **/*.sh
 data/*
