@@ -3,7 +3,7 @@
 ![torch](https://img.shields.io/badge/torch-2.2.1-green?labelColor=red&style=flat)
 ![cuda](https://img.shields.io/badge/cuda-12.4-green?labelColor=grey&style=flat)
 
-This repository contains the code necessary to replicate the experiments and results presented in the paper _"An End-to-end Explainability Framework for Spatio-Temporal Predictive Modeling"_ submitted to _Machine Learning, Springer._
+This repository contains the code necessary to replicate the experiments and results presented in the paper _"An End-to-end Explainability Framework for Spatio-Temporal Predictive Modeling"_.
 
 ![gif](https://s2.ezgif.com/tmp/ezgif-2-ce4af01ee1.gif)
 
