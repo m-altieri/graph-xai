@@ -6,10 +6,9 @@
 **/*.png
 **/*.pyc
 **/*.sh
-data
+data/*
+masks/*
 plots/*
 results/*
 saved_models/*
-!saved_models/metamasker/
-!saved_models/SVD-LSTM-pems-sf-weather/
 tb/*
